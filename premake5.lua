@@ -18,6 +18,9 @@ project "Purr"
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
 
+	pchheader "purrpch.h"
+	pchsource "Purr/src/purrpch.cpp"
+
 	files
 	{
 		"%{prj.name}/src/**.h",

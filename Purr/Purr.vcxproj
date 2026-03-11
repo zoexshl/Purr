@@ -76,7 +76,8 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>purrpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>PURR_PLATFORM_WINDOWS;PURR_BUILD_DLL;PURR_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -101,7 +102,8 @@ copy /B /Y ..\bin\Debug-windows-x86_64\Purr\Purr.dll ..\bin\Debug-windows-x86_64
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>purrpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>PURR_PLATFORM_WINDOWS;PURR_BUILD_DLL;PURR_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -130,7 +132,8 @@ copy /B /Y ..\bin\Release-windows-x86_64\Purr\Purr.dll ..\bin\Release-windows-x8
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
     <ClCompile>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>purrpch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>PURR_PLATFORM_WINDOWS;PURR_BUILD_DLL;PURR_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>src;vendor\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -167,10 +170,14 @@ copy /B /Y ..\bin\Dist-windows-x86_64\Purr\Purr.dll ..\bin\Dist-windows-x86_64\S
     <ClInclude Include="src\Purr\Events\KeyEvent.h" />
     <ClInclude Include="src\Purr\Events\MouseEvent.h" />
     <ClInclude Include="src\Purr\Log.h" />
+    <ClInclude Include="src\purrpch.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Purr\Application.cpp" />
     <ClCompile Include="src\Purr\Log.cpp" />
+    <ClCompile Include="src\purrpch.cpp">
+      <PrecompiledHeader>Create</PrecompiledHeader>
+    </ClCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

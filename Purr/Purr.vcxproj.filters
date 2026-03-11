@@ -34,6 +34,7 @@
     <ClInclude Include="src\Purr\Log.h">
       <Filter>Purr</Filter>
     </ClInclude>
+    <ClInclude Include="src\purrpch.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Purr\Application.cpp">
@@ -42,5 +43,6 @@
     <ClCompile Include="src\Purr\Log.cpp">
       <Filter>Purr</Filter>
     </ClCompile>
+    <ClCompile Include="src\purrpch.cpp" />
   </ItemGroup>
 </Project>

@@ -2,8 +2,6 @@
 
 #include "Purr/Core.h"
 
-#include <string>
-#include <functional>
 
 /*
 	Systeme evenement : Application stop des que la souris est clique immediatement
