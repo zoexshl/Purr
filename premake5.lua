@@ -10,6 +10,12 @@ workspace "Purr"
 
 outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 
+-- Ajouter les r�pertoires relatifs au dossier root (solution directory)
+IncludeDir = {}
+IncludeDir["GLFW"] = "Purr/vendor/GLFW/include"
+-- Inclure le premake5.lua situ� dans le dossier GLFW
+include "Purr/vendor/GLFW" 
+
 project "Purr"
 	location "Purr"
 	kind "SharedLib"
@@ -30,7 +36,15 @@ project "Purr"
 	includedirs
 	{
 		"%{prj.name}/src",
-		"%{prj.name}/vendor/spdlog/include"
+		"%{prj.name}/vendor/spdlog/include",
+		"%{IncludeDir.GLFW}"
+	}
+
+	links
+	{
+		"GLFW",
+		"opengl32.lib",
+		"dwmapi.lib"
 	}
 
 	filter "system:windows"
@@ -81,7 +95,7 @@ project "Sandbox"
 
 	includedirs
 	{
-		"Purr/vendor/spdlog/include;",
+		"Purr/vendor/spdlog/include",
 		"Purr/src"
 	}
 

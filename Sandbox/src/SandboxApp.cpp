@@ -1,3 +1,4 @@
+#include "purrpch.h"
 #include <Purr.h>
 
 class Sandbox : public Purr::Application

@@ -1,3 +1,6 @@
 [submodule "Purr/vendor/spdlog"]
 	path = Purr/vendor/spdlog
 	url = https://github.com/gabime/spdlog
+[submodule "Purr/vendor/GLFW"]
+	path = Purr/vendor/GLFW
+	url = https://github.com/glfw/glfw
