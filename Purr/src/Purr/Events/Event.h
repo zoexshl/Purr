@@ -68,13 +68,13 @@ namespace Purr {
 		{
 		}
 
-		
-		template<typename T, typename F>
+		// avant : template<typename T, typename F>
+		template<typename T>
 		bool Dispatch(EventFn<T> func)
 		{
 			if (m_Event.GetEventType() == T::GetStaticType())
 			{
-				m_Event.Handled = func(*(T*)&m_Event);
+				m_Event.m_Handled = func(*(T*)&m_Event);
 				return true;
 			}
 			return false;
@@ -87,4 +87,26 @@ namespace Purr {
 	{
 		return os << e.ToString();
 	}
+
+	
+	// Specialize fmt::formatter for Event types outside the Hazel namespace
+	template<typename T>
+	struct fmt::formatter<
+		T, std::enable_if_t<std::is_base_of<Purr::Event, T>::value, char>>
+		: fmt::formatter<std::string>
+	{
+		auto format(const T& event, fmt::format_context& ctx) const
+		{
+			return fmt::format_to(ctx.out(), "{}", event.ToString());
+		}
+	};
+
+	// Utility function for formatting strings with arguments
+	template <typename... T>
+	std::string StringFromArgs(fmt::format_string<T...> fmt, T&&... args)
+	{
+		return fmt::format(fmt, std::forward<T>(args)...);
+	}
+
+
 }
