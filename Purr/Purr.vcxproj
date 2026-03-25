@@ -84,7 +84,7 @@
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /MDd %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
@@ -114,7 +114,7 @@ copy /B /Y ..\bin\Debug-windows-x86_64\Purr\Purr.dll ..\bin\Debug-windows-x86_64
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /MD %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
@@ -145,7 +145,7 @@ copy /B /Y ..\bin\Release-windows-x86_64\Purr\Purr.dll ..\bin\Release-windows-x8
       <MinimalRebuild>false</MinimalRebuild>
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/utf-8 /MD %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
@@ -173,6 +173,8 @@ copy /B /Y ..\bin\Dist-windows-x86_64\Purr\Purr.dll ..\bin\Dist-windows-x86_64\S
     <ClInclude Include="src\Purr\Events\Event.h" />
     <ClInclude Include="src\Purr\Events\KeyEvent.h" />
     <ClInclude Include="src\Purr\Events\MouseEvent.h" />
+    <ClInclude Include="src\Purr\Layer.h" />
+    <ClInclude Include="src\Purr\LayerStack.h" />
     <ClInclude Include="src\Purr\Log.h" />
     <ClInclude Include="src\Purr\Window.h" />
     <ClInclude Include="src\purrpch.h" />
@@ -180,6 +182,8 @@ copy /B /Y ..\bin\Dist-windows-x86_64\Purr\Purr.dll ..\bin\Dist-windows-x86_64\S
   <ItemGroup>
     <ClCompile Include="src\Platform\Windows\WindowsWindow.cpp" />
     <ClCompile Include="src\Purr\Application.cpp" />
+    <ClCompile Include="src\Purr\Layer.cpp" />
+    <ClCompile Include="src\Purr\LayerStack.cpp" />
     <ClCompile Include="src\Purr\Log.cpp" />
     <ClCompile Include="src\purrpch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>

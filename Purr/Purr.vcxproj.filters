@@ -40,6 +40,12 @@
     <ClInclude Include="src\Purr\Events\MouseEvent.h">
       <Filter>Purr\Events</Filter>
     </ClInclude>
+    <ClInclude Include="src\Purr\Layer.h">
+      <Filter>Purr</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Purr\LayerStack.h">
+      <Filter>Purr</Filter>
+    </ClInclude>
     <ClInclude Include="src\Purr\Log.h">
       <Filter>Purr</Filter>
     </ClInclude>
@@ -53,6 +59,12 @@
       <Filter>Platform\Windows</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\Application.cpp">
+      <Filter>Purr</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\Layer.cpp">
+      <Filter>Purr</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\LayerStack.cpp">
       <Filter>Purr</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\Log.cpp">
