@@ -2,6 +2,7 @@
 #include "Purr/Window.h"
 #include <GLFW/glfw3.h>
 
+
 namespace Purr {
 
 	class WindowsWindow : public Window

@@ -13,8 +13,10 @@ outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 -- Ajouter les r�pertoires relatifs au dossier root (solution directory)
 IncludeDir = {}
 IncludeDir["GLFW"] = "Purr/vendor/GLFW/include"
+IncludeDir["Glad"] = "Purr/vendor/Glad/include"
 -- Inclure le premake5.lua situ� dans le dossier GLFW
 include "Purr/vendor/GLFW" 
+include "Purr/vendor/Glad" 
 
 project "Purr"
 	location "Purr"
@@ -37,12 +39,14 @@ project "Purr"
 	{
 		"%{prj.name}/src",
 		"%{prj.name}/vendor/spdlog/include",
-		"%{IncludeDir.GLFW}"
+		"%{IncludeDir.GLFW}",
+		"%{IncludeDir.Glad}"
 	}
 
 	links
 	{
 		"GLFW",
+		"Glad",
 		"opengl32.lib",
 		"dwmapi.lib"
 	}
@@ -56,7 +60,8 @@ project "Purr"
 		defines
 		{
 			"PURR_PLATFORM_WINDOWS",
-			"PURR_BUILD_DLL"
+			"PURR_BUILD_DLL",
+			"GLFW_INCLUDE_NONE"
 		}
 
 		postbuildcommands
