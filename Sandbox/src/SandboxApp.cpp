@@ -29,6 +29,7 @@ public:
 	Sandbox()
 	{
 		PushLayer(new ExampleLayer());
+		PushOverlay(new Purr::ImGuiLayer());
 	}
 
 	~Sandbox()

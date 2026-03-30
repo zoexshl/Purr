@@ -14,9 +14,11 @@ outputdir = "%{cfg.buildcfg}-%{cfg.system}-%{cfg.architecture}"
 IncludeDir = {}
 IncludeDir["GLFW"] = "Purr/vendor/GLFW/include"
 IncludeDir["Glad"] = "Purr/vendor/Glad/include"
+IncludeDir["ImGui"] = "Purr/vendor/imgui"
 -- Inclure le premake5.lua situ� dans le dossier GLFW
 include "Purr/vendor/GLFW" 
 include "Purr/vendor/Glad" 
+include "Purr/vendor/imgui"
 
 project "Purr"
 	location "Purr"
@@ -40,13 +42,15 @@ project "Purr"
 		"%{prj.name}/src",
 		"%{prj.name}/vendor/spdlog/include",
 		"%{IncludeDir.GLFW}",
-		"%{IncludeDir.Glad}"
+		"%{IncludeDir.Glad}",
+		"%{IncludeDir.ImGui}"
 	}
 
 	links
 	{
 		"GLFW",
 		"Glad",
+		"ImGui",
 		"opengl32.lib",
 		"dwmapi.lib"
 	}
