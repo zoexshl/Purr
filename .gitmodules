@@ -7,3 +7,6 @@
 [submodule "Purr/vendor/imgui"]
 	path = Purr/vendor/imgui
 	url = https://github.com/zoexshl/imgui
+[submodule "Purr/vendor/glm"]
+	path = Purr/vendor/glm
+	url = https://github.com/g-truc/glm

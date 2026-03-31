@@ -17,6 +17,7 @@ IncludeDir = {}
 IncludeDir["GLFW"] = "Purr/vendor/GLFW/include"
 IncludeDir["Glad"] = "Purr/vendor/Glad/include"
 IncludeDir["ImGui"] = "Purr/vendor/imgui"
+IncludeDir["glm"] = "Purr/vendor/glm"
 -- Inclure le premake5.lua situ� dans le dossier GLFW
 include "Purr/vendor/GLFW" 
 include "Purr/vendor/Glad" 
@@ -25,6 +26,7 @@ group "Dependencies"
 	include "Purr/vendor/GLFW"
 	include "Purr/vendor/Glad"
 	include "Purr/vendor/imgui"
+
 group ""
 
 
@@ -45,6 +47,8 @@ project "Purr"
 	{
 		"%{prj.name}/src/**.h",
 		"%{prj.name}/src/**.cpp",
+		"%{prj.name}/vendor/glm/glm/**.hpp",
+		"%{prj.name}/vendor/glm/glm/**.inl"
 	}
 
 	includedirs
@@ -53,7 +57,8 @@ project "Purr"
 		"%{prj.name}/vendor/spdlog/include",
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.Glad}",
-		"%{IncludeDir.ImGui}"
+		"%{IncludeDir.ImGui}",
+		"%{IncludeDir.glm}"
 	}
 
 	links
@@ -64,6 +69,12 @@ project "Purr"
 		"opengl32.lib",
 		"dwmapi.lib"
 	}
+
+	 filter "files:Purr/vendor/**"
+        flags { "NoPCH" }
+    
+    filter ""  -- reset du filtre
+
 
 	filter "system:windows"
 		cppdialect "C++17"
@@ -118,7 +129,9 @@ project "Sandbox"
 	includedirs
 	{
 		"Purr/vendor/spdlog/include",
-		"Purr/src"
+		"Purr/src",
+		"%{IncludeDir.glm}"
+	
 	}
 
 	links

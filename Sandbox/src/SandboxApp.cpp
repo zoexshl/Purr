@@ -3,10 +3,12 @@
 #include <Purr/Events/KeyEvent.h>
 
 
+
 class ExampleLayer : public Purr::Layer {
 public:
 	ExampleLayer() :Layer("Example")
 	{
+		
 
 	}
 

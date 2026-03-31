@@ -88,6 +88,7 @@ namespace Purr {
 		return os << e.ToString();
 	}
 
+
 	
 	// Specialize fmt::formatter for Event types outside the Hazel namespace
 	template<typename T>
