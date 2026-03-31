@@ -10,6 +10,13 @@
 	#error Purr only support Windows !
 #endif
 
+
+#ifdef PURR_DEBUG
+	#define PURR_ENABLE_ASSERTS
+#endif
+
+
+
 #ifdef PURR_ENABLE_ASSERTS
 #define PURR_ASSERT(x, ...) { if(!(x)) { PURR_ERROR("Assertion Failed: {0}", __VA_ARGS__); __debugbreak(); } }
 #define PURR_CORE_ASSERT(x, ...) { if(!(x)) { PURR_CORE_ERROR("Assertion Failed: {0}", __VA_ARGS__); __debugbreak(); } }

@@ -1,5 +1,7 @@
 workspace "Purr"
 	architecture "x64"
+	
+	startproject "Sandbox"
 
 	configurations
 	{
@@ -19,11 +21,19 @@ IncludeDir["ImGui"] = "Purr/vendor/imgui"
 include "Purr/vendor/GLFW" 
 include "Purr/vendor/Glad" 
 include "Purr/vendor/imgui"
+group "Dependencies"
+	include "Purr/vendor/GLFW"
+	include "Purr/vendor/Glad"
+	include "Purr/vendor/imgui"
+group ""
+
+
 
 project "Purr"
 	location "Purr"
 	kind "SharedLib"
 	language "C++"
+	staticruntime "off"
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
@@ -57,7 +67,6 @@ project "Purr"
 
 	filter "system:windows"
 		cppdialect "C++17"
-		staticruntime "On"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
 
@@ -76,17 +85,17 @@ project "Purr"
 	
 	filter "configurations:Debug"
 		defines "PURR_DEBUG"
-		buildoptions "/MDd"
+		runtime "Debug"
 		symbols "On"
 
 	filter "configurations:Release"
 		defines "PURR_RELEASE"
-		buildoptions "/MD"
+		runtime "Release"
 		optimize "On"
 
 	filter "configurations:Dist"
 		defines "PURR_DIST"
-		buildoptions "/MD"
+		runtime "Release"
 		optimize "On"
 
 	
@@ -94,6 +103,7 @@ project "Sandbox"
 	location "Sandbox"
 	kind "ConsoleApp"
 	language "C++"
+	staticruntime "off"
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
@@ -117,7 +127,6 @@ project "Sandbox"
 	}
 	filter "system:windows"
 		cppdialect "C++17"
-		staticruntime "On"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
 
@@ -128,17 +137,17 @@ project "Sandbox"
 	
 	filter "configurations:Debug"
 		defines "PURR_DEBUG"
-		buildoptions "/MDd"
+		runtime "Debug"
 		symbols "On"
 
 	filter "configurations:Release"
 		defines "PURR_RELEASE"
-		buildoptions "/MD"
+		runtime "Release"
 		optimize "On"
 
 	filter "configurations:Dist"
 		defines "PURR_DIST"
-		buildoptions "/MD"
+		runtime "Release"
 		optimize "On"
 
 	
