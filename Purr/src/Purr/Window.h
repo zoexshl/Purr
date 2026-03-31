@@ -24,6 +24,7 @@ namespace Purr {
 
 	{
 	public:
+		virtual void* GetNativeWindow() const = 0; // Ajouté pour les evenements ImGui
 		using EventCallbackFn = std::function<void(Event&)>;
 		virtual ~Window(){}
 		virtual void OnUpdate() = 0;

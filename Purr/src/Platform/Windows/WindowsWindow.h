@@ -8,6 +8,8 @@ namespace Purr {
 	class WindowsWindow : public Window
 	{
 	public:
+		inline void* GetNativeWindow() const { return m_Window; }
+
 		WindowsWindow(const WindowProps& props);
 		virtual ~WindowsWindow();
 
