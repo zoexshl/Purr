@@ -25,6 +25,19 @@ namespace Purr {
 		return state == GLFW_PRESS;
 	}
 
+	std::pair<float, float> WindowsInput::GetMousePositionImpl()
+	{
+
+
+		auto window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow()); // Référence de la fenêtre / Window glfw
+		double xpos, ypos;
+
+		glfwGetCursorPos(window, &xpos, &ypos);
+
+		return { (float)xpos, (float)ypos };
+
+	}
+
 	float WindowsInput::GetMouseXImpl()
 	{
 		auto [x, y] = GetMousePositionImpl();
@@ -40,17 +53,5 @@ namespace Purr {
 
 
 		return y;
-	}
-	std::pair<float, float> WindowsInput::GetMousePositionImpl()
-	{
-
-
-		auto window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow()); // Référence de la fenêtre / Window glfw
-		double xpos, ypos;
-
-		glfwGetCursorPos(window, &xpos, &ypos);
-
-		return { (float)xpos, (float)ypos };
-
 	}
 }

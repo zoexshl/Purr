@@ -164,6 +164,8 @@ copy /B /Y ..\bin\Dist-windows-x86_64\Purr\Purr.dll ..\bin\Dist-windows-x86_64\S
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\Purr\KeyCodes.h" />
+    <ClInclude Include="src\Purr\MouseButtonCodes.h" />
     <ClInclude Include="src\Platform\OpenGL\ImGuiOpenGLRenderer.h" />
     <ClInclude Include="src\Platform\Windows\WindowsInput.h" />
     <ClInclude Include="src\Platform\Windows\WindowsWindow.h" />
