@@ -4,6 +4,7 @@
 #include "Window.h"
 #include "Purr/Events/ApplicationEvent.h"
 #include "Purr/LayerStack.h"
+#include "Purr/ImGui/ImGuiLayer.h"
 
 namespace Purr {
 	class PURR_API Application
@@ -26,6 +27,7 @@ namespace Purr {
 	private:
 		bool OnWindowClose(WindowCloseEvent& e);
 		std::unique_ptr<Window> m_Window;
+		ImGuiLayer* m_ImGuiLayer;
 		bool m_Running = true;
 		LayerStack m_LayerStack;
 

@@ -71,7 +71,7 @@ project "Purr"
 	}
 
 	 filter "files:Purr/vendor/**"
-        flags { "NoPCH" }
+        enablepch "Off"
     
     filter ""  -- reset du filtre
 
@@ -130,6 +130,7 @@ project "Sandbox"
 	{
 		"Purr/vendor/spdlog/include",
 		"Purr/src",
+		"Purr/vendor",
 		"%{IncludeDir.glm}"
 	
 	}

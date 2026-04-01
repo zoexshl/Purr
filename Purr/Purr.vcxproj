@@ -164,7 +164,6 @@ copy /B /Y ..\bin\Dist-windows-x86_64\Purr\Purr.dll ..\bin\Dist-windows-x86_64\S
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="src\Platform\OpenGL\ImGuiOpenGLRenderer.h" />
     <ClInclude Include="src\Platform\Windows\WindowsInput.h" />
     <ClInclude Include="src\Platform\Windows\WindowsWindow.h" />
     <ClInclude Include="src\Purr.h" />
@@ -605,10 +604,10 @@ copy /B /Y ..\bin\Dist-windows-x86_64\Purr\Purr.dll ..\bin\Dist-windows-x86_64\S
     <ClInclude Include="vendor\glm\glm\vector_relational.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\Platform\OpenGL\ImGuiOpenGLRenderer.cpp" />
     <ClCompile Include="src\Platform\Windows\WindowsInput.cpp" />
     <ClCompile Include="src\Platform\Windows\WindowsWindow.cpp" />
     <ClCompile Include="src\Purr\Application.cpp" />
+    <ClCompile Include="src\Purr\ImGui\ImGuiBuild.cpp" />
     <ClCompile Include="src\Purr\ImGui\ImGuiLayer.cpp" />
     <ClCompile Include="src\Purr\Layer.cpp" />
     <ClCompile Include="src\Purr\LayerStack.cpp" />

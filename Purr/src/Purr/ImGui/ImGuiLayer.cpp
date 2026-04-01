@@ -28,6 +28,9 @@ namespace Purr {
         // true = installe TOUS les callbacks GLFW automatiquement
         ImGui_ImplGlfw_InitForOpenGL(window, true);
         ImGui_ImplOpenGL3_Init("#version 410");
+
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     }
 
     void ImGuiLayer::OnDetach()
@@ -37,32 +40,42 @@ namespace Purr {
         ImGui::DestroyContext();
     }
 
-    void ImGuiLayer::OnUpdate()
-    {
-        ImGuiIO& io = ImGui::GetIO();
-        Application& app = Application::Get();
-        io.DisplaySize = ImVec2(
-            (float)app.GetWindow().GetWidth(),
-            (float)app.GetWindow().GetHeight()
-        );
+    void ImGuiLayer::Begin() {
+
 
         ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();   // gère DeltaTime et les inputs automatiquement
+        ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+    }
+
+    void ImGuiLayer::End() {
+
+
+        ImGuiIO& io = ImGui::GetIO();
+        Application& app = Application::Get();
+        io.DisplaySize = ImVec2(app.GetWindow().GetWidth(), app.GetWindow().GetHeight());
+
+        // Renderer
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        // vient du docking branch
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+        {
+            GLFWwindow* backup_current_context = glfwGetCurrentContext();
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+            glfwMakeContextCurrent(backup_current_context);
+        }
+    }
+
+
+    void ImGuiLayer::OnImGuiRender() {
 
         static bool show = true;
         ImGui::ShowDemoWindow(&show);
 
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 
-    void ImGuiLayer::OnEvent(Event& event)
-    {
-        // Les callbacks sont gérés par ImGui_ImplGlfw automatiquement.
-        // On peut bloquer la propagation des events vers l'app ici si ImGui les consomme :
-        // ImGuiIO& io = ImGui::GetIO();
-        // event.Handled |= event.IsInCategory(EventCategoryMouse) & io.WantCaptureMouse;
-        // event.Handled |= event.IsInCategory(EventCategoryKeyboard) & io.WantCaptureKeyboard;
-    }
+
 }

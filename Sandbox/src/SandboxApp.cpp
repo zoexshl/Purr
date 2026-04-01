@@ -1,6 +1,7 @@
 #include "purrpch.h"
 #include <Purr.h>
 #include <Purr/Events/KeyEvent.h>
+#include "imgui/imgui.h"
 
 
 
@@ -19,6 +20,13 @@ public:
 			PURR_TRACE("-------------- POLL: Tab Key est pressed -------------");
 
 	}
+	/*
+	virtual void OnImGuiRender() override {
+		ImGui::Begin("Test");
+		ImGui::Text("Hello World");
+		ImGui::End();
+	}
+	*/
 
 	void OnEvent(Purr::Event& event) override
 	{
@@ -40,7 +48,7 @@ public:
 	Sandbox()
 	{
 		PushLayer(new ExampleLayer());
-		PushOverlay(new Purr::ImGuiLayer());
+
 	}
 
 	~Sandbox()
