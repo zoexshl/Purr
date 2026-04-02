@@ -33,9 +33,10 @@ group ""
 
 project "Purr"
 	location "Purr"
-	kind "SharedLib"
+	kind "StaticLib"
 	language "C++"
-	staticruntime "off"
+	cppdialect "C++17"
+	staticruntime "on"
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
@@ -51,6 +52,12 @@ project "Purr"
 		"%{prj.name}/vendor/glm/glm/**.inl"
 	}
 
+	defines
+	{
+		"_CRT_SECURE_NO_WARNINGS"
+	}
+
+
 	includedirs
 	{
 		"%{prj.name}/src",
@@ -61,6 +68,9 @@ project "Purr"
 		"%{IncludeDir.glm}"
 	}
 
+
+buildoptions { "/external:W0" }
+
 	links
 	{
 		"GLFW",
@@ -70,6 +80,11 @@ project "Purr"
 		"dwmapi.lib"
 	}
 
+
+	-- Link warning suppression
+	-- LNK4006: Sympbol already defined in another library will pick first definition
+	linkoptions { "/ignore:4006" }
+
 	 filter "files:Purr/vendor/**"
         enablepch "Off"
     
@@ -77,7 +92,6 @@ project "Purr"
 
 
 	filter "system:windows"
-		cppdialect "C++17"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
 
@@ -88,33 +102,29 @@ project "Purr"
 			"GLFW_INCLUDE_NONE"
 		}
 
-		postbuildcommands
-	{
-		("{MKDIR} ../bin/" .. outputdir .. "/Sandbox"),
-		("{COPYFILE} %{cfg.buildtarget.relpath} ../bin/" .. outputdir .. "/Sandbox")
-	}
-	
+
 	filter "configurations:Debug"
 		defines "PURR_DEBUG"
 		runtime "Debug"
-		symbols "On"
+		symbols "on"
 
 	filter "configurations:Release"
 		defines "PURR_RELEASE"
 		runtime "Release"
-		optimize "On"
+		optimize "on"
 
 	filter "configurations:Dist"
 		defines "PURR_DIST"
 		runtime "Release"
-		optimize "On"
+		optimize "on"
 
 	
 project "Sandbox"
 	location "Sandbox"
 	kind "ConsoleApp"
 	language "C++"
-	staticruntime "off"
+	cppdialect "C++17"
+	staticruntime "on"
 
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")
 	objdir ("bin-int/" .. outputdir .. "/%{prj.name}")
@@ -140,7 +150,6 @@ project "Sandbox"
 		"Purr"
 	}
 	filter "system:windows"
-		cppdialect "C++17"
 		systemversion "latest"
 		buildoptions { "/utf-8" }
 
@@ -157,11 +166,9 @@ project "Sandbox"
 	filter "configurations:Release"
 		defines "PURR_RELEASE"
 		runtime "Release"
-		optimize "On"
+		optimize "on"
 
 	filter "configurations:Dist"
 		defines "PURR_DIST"
 		runtime "Release"
-		optimize "On"
-
-	
+		optimize "on"

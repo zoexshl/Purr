@@ -19,12 +19,12 @@ namespace Purr {
 		}
 	};
 
-	// L'interface représentant systeme inf Window
+	// L'interface reprÃ©sentant systeme inf Window
 	class PURR_API Window
 
 	{
 	public:
-		virtual void* GetNativeWindow() const = 0; // Ajouté pour les evenements ImGui
+		virtual void* GetNativeWindow() const = 0; // AjoutÃ© pour les evenements ImGui
 		using EventCallbackFn = std::function<void(Event&)>;
 		virtual ~Window(){}
 		virtual void OnUpdate() = 0;

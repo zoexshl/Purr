@@ -9,7 +9,7 @@ namespace Purr {
 
 	bool WindowsInput::IsKeyPressedImpl(int keycode)
 	{
-		auto window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow()) ; // Référence de la fenêtre / Window glfw
+		auto window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow()) ; // RÃ©fÃ©rence de la fenÃªtre / Window glfw
 
 		auto state = glfwGetKey(window, keycode);
 		
@@ -18,7 +18,7 @@ namespace Purr {
 	}
 	bool WindowsInput::IsMouseButtonPressedImpl(int button)
 	{
-		auto window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow()); // Référence de la fenêtre / Window glfw
+		auto window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow()); // RÃ©fÃ©rence de la fenÃªtre / Window glfw
 
 		auto state = glfwGetMouseButton(window, button);
 
@@ -29,7 +29,7 @@ namespace Purr {
 	{
 
 
-		auto window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow()); // Référence de la fenêtre / Window glfw
+		auto window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow()); // RÃ©fÃ©rence de la fenÃªtre / Window glfw
 		double xpos, ypos;
 
 		glfwGetCursorPos(window, &xpos, &ypos);

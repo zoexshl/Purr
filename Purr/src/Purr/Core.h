@@ -1,11 +1,17 @@
 #pragma once
 
 #ifdef PURR_PLATFORM_WINDOWS
+#if PURR_DYNAMIC_LINK
 	#ifdef PURR_BUILD_DLL
 		#define PURR_API _declspec(dllexport)
 	#else
 		#define PURR_API _declspec(dllimport)
 	#endif
+#else
+#define PURR_API
+#endif
+
+
 #else
 	#error Purr only support Windows !
 #endif

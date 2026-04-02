@@ -1,6 +1,6 @@
 #pragma once
 
-// Utilisé par les applications Purr
+// UtilisÃ© par les applications Purr
 #include "Purr/Application.h"
 #include "Purr/Layer.h"
 #include "Purr/Log.h"

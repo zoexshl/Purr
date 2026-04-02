@@ -5,6 +5,7 @@
 
 
 
+
 class ExampleLayer : public Purr::Layer {
 public:
 	ExampleLayer() :Layer("Example")
@@ -20,13 +21,13 @@ public:
 			PURR_TRACE("-------------- POLL: Tab Key est pressed -------------");
 
 	}
-	/*
+	
 	virtual void OnImGuiRender() override {
-		ImGui::Begin("Test");
-		ImGui::Text("Hello World");
+		ImGui::Begin("NEW WIND TEST");
+		ImGui::Text("UR MOM !!");
 		ImGui::End();
 	}
-	*/
+	
 
 	void OnEvent(Purr::Event& event) override
 	{

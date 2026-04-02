@@ -15,7 +15,7 @@ namespace Purr {
 
 	Application::Application()
 	{
-		PURR_CORE_ASSERT(!s_Instance, "Application existe dÈj‡ !")
+		PURR_CORE_ASSERT(!s_Instance, "Application existe d√©j√† !")
 		s_Instance = this;
 
 		m_Window = std::unique_ptr<Window>(Window::Create());

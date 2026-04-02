@@ -34,7 +34,7 @@ namespace Purr {
 	private: 
 		static Application* s_Instance;
 	};
-	// Défini dans Client
+	// DÃ©fini dans Client
 	Application* CreateApplication();
 }
 
