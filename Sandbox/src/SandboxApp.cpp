@@ -16,7 +16,6 @@ struct Light
     glm::vec3 Position = { 0.0f, 3.0f, 0.0f };
     glm::vec3 Color = { 1.0f, 1.0f, 1.0f };
     float     Intensity = 1.0f;
-    // Atténuation
     float     Constant = 1.0f;
     float     Linear = 0.09f;
     float     Quadratic = 0.032f;
@@ -39,6 +38,7 @@ struct SceneObject
     glm::vec3   Rotation = { 0.0f, 0.0f, 0.0f };
     glm::vec3   Scale = { 1.0f, 1.0f, 1.0f };
     Material    Mat;
+    bool        IsPlane = false;
 
     glm::mat4 GetTransform() const
     {
@@ -50,6 +50,7 @@ struct SceneObject
         return t;
     }
 };
+
 // -----------------------------------------------------------------------
 // ExampleLayer
 // -----------------------------------------------------------------------
@@ -60,11 +61,16 @@ public:
         m_Camera(60.0f, 1280.0f / 720.0f)
     {
         BuildCubeMesh();
+        BuildPlaneMesh();
         BuildShader();
+        BuildTexturedShader();
         BuildWireShader();
         BuildBBoxMesh();
 
-        // Objets
+        // Texture procédurale (damier rose/gris)
+        m_CheckerTex = std::make_shared<Purr::Texture>(128, 128, 0xFFB97FFF);
+
+        // Objets cubes
         SceneObject a; a.Name = "Cube 1"; a.Position = { -1.5f, 0.0f, 0.0f };
         a.Mat.Diffuse = { 1.0f, 0.4f, 0.7f }; a.Mat.Model = IlluminationModel::Phong;
         m_Objects.push_back(a);
@@ -77,7 +83,18 @@ public:
         c.Mat.Diffuse = { 0.5f, 1.0f, 0.5f }; c.Mat.Model = IlluminationModel::Lambert;
         m_Objects.push_back(c);
 
-        // 4 lumières de couleurs différentes
+        // Plan au sol texturé
+        SceneObject plane;
+        plane.Name = "Plan (sol)";
+        plane.IsPlane = true;
+        plane.Position = { 0.0f, -0.5f, 0.0f };
+        plane.Scale = { 6.0f, 1.0f, 6.0f };
+        plane.Mat.Diffuse = { 1.0f, 1.0f, 1.0f };
+        plane.Mat.Specular = { 0.2f, 0.2f, 0.2f };
+        plane.Mat.Model = IlluminationModel::Lambert;
+        m_Objects.push_back(plane);
+
+        // Lumières
         m_Lights[0].Position = { 3.0f, 3.0f,  3.0f }; m_Lights[0].Color = { 1.0f, 1.0f, 1.0f };
         m_Lights[1].Position = { -3.0f, 2.0f,  2.0f }; m_Lights[1].Color = { 1.0f, 0.4f, 0.4f };
         m_Lights[2].Position = { 0.0f, 4.0f, -3.0f }; m_Lights[2].Color = { 0.4f, 0.6f, 1.0f };
@@ -98,42 +115,63 @@ public:
         glm::mat4 invView = glm::inverse(m_Camera.GetViewMatrix());
         glm::vec3 camPos = glm::vec3(invView[3][0], invView[3][1], invView[3][2]);
 
-        m_Shader->Bind();
-        m_Shader->SetMat4("u_VP", m_Camera.GetViewProjection());
-        m_Shader->SetFloat3("u_CamPos", camPos);
-        m_Shader->SetFloat("u_AmbientStrength", m_AmbientStrength);
-
-        // Upload des 4 lumières
-        for (int i = 0; i < 4; i++)
-        {
-            std::string base = "u_Lights[" + std::to_string(i) + "].";
-            m_Shader->SetFloat3(base + "Position", m_Lights[i].Position);
-            m_Shader->SetFloat3(base + "Color", m_Lights[i].Color);
-            m_Shader->SetFloat(base + "Intensity", m_Lights[i].Enabled ? m_Lights[i].Intensity : 0.0f);
-            m_Shader->SetFloat(base + "Constant", m_Lights[i].Constant);
-            m_Shader->SetFloat(base + "Linear", m_Lights[i].Linear);
-            m_Shader->SetFloat(base + "Quadratic", m_Lights[i].Quadratic);
-        }
+        // Upload lumières (commun aux deux shaders)
+        auto uploadLights = [&](std::shared_ptr<Purr::Shader>& sh) {
+            sh->SetMat4("u_VP", m_Camera.GetViewProjection());
+            sh->SetFloat3("u_CamPos", camPos);
+            sh->SetFloat("u_AmbientStrength", m_AmbientStrength);
+            for (int i = 0; i < 4; i++) {
+                std::string b = "u_Lights[" + std::to_string(i) + "].";
+                sh->SetFloat3(b + "Position", m_Lights[i].Position);
+                sh->SetFloat3(b + "Color", m_Lights[i].Color);
+                sh->SetFloat(b + "Intensity", m_Lights[i].Enabled ? m_Lights[i].Intensity : 0.0f);
+                sh->SetFloat(b + "Constant", m_Lights[i].Constant);
+                sh->SetFloat(b + "Linear", m_Lights[i].Linear);
+                sh->SetFloat(b + "Quadratic", m_Lights[i].Quadratic);
+            }
+            };
 
         for (auto& obj : m_Objects)
         {
             glm::mat4 model = obj.GetTransform();
             glm::mat4 normalMat = glm::transpose(glm::inverse(model));
 
-            m_Shader->SetMat4("u_Model", model);
-            m_Shader->SetMat4("u_NormalMat", normalMat);
-            m_Shader->SetFloat3("u_MatAmbient", obj.Mat.Ambient);
-            m_Shader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
-            m_Shader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
-            m_Shader->SetFloat("u_MatShininess", obj.Mat.Shininess);
-            m_Shader->SetInt("u_IllumModel", (int)obj.Mat.Model);
-
-            Purr::RenderCommand::DrawIndexed(m_VA);
+            if (obj.IsPlane)
+            {
+                // Shader texturé pour le plan
+                m_TexShader->Bind();
+                uploadLights(m_TexShader);
+                m_TexShader->SetMat4("u_Model", model);
+                m_TexShader->SetMat4("u_NormalMat", normalMat);
+                m_TexShader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
+                m_TexShader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                m_TexShader->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                m_TexShader->SetInt("u_Texture", 0);
+                m_CheckerTex->Bind(0);
+                Purr::RenderCommand::DrawIndexed(m_PlaneVA);
+            }
+            else
+            {
+                m_Shader->Bind();
+                uploadLights(m_Shader);
+                m_Shader->SetMat4("u_Model", model);
+                m_Shader->SetMat4("u_NormalMat", normalMat);
+                m_Shader->SetFloat3("u_MatAmbient", obj.Mat.Ambient);
+                m_Shader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
+                m_Shader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                m_Shader->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                m_Shader->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                Purr::RenderCommand::DrawIndexed(m_VA);
+            }
         }
-        // Bounding box de l'objet sélectionné
+
+        // Bounding box
         if (m_Selected >= 0 && m_Selected < (int)m_Objects.size())
         {
             auto& obj = m_Objects[m_Selected];
+            auto& vaToUse = obj.IsPlane ? m_PlaneVA : m_BBoxVA;
+
             glm::mat4 model = glm::translate(glm::mat4(1.0f), obj.Position);
             model = glm::rotate(model, glm::radians(obj.Rotation.x), { 1,0,0 });
             model = glm::rotate(model, glm::radians(obj.Rotation.y), { 0,1,0 });
@@ -168,7 +206,7 @@ public:
                 m_Selected = i;
         }
         ImGui::Separator();
-        if (ImGui::Button("+ Ajouter"))
+        if (ImGui::Button("+ Cube"))
         {
             SceneObject obj;
             obj.Name = "Cube " + std::to_string(m_Objects.size() + 1);
@@ -186,11 +224,11 @@ public:
             }
         }
         ImGui::End();
+
         // ---- Lumières -----------------------------------------------------
         ImGui::Begin("Lumieres");
         ImGui::SliderFloat("Ambiance globale", &m_AmbientStrength, 0.0f, 1.0f);
         ImGui::Separator();
-
         static const char* lightNames[] = { "Lumiere 1", "Lumiere 2", "Lumiere 3", "Lumiere 4" };
         for (int i = 0; i < 4; i++)
         {
@@ -210,7 +248,6 @@ public:
         }
         ImGui::End();
 
-
         // ---- Properties ---------------------------------------------------
         if (m_Selected >= 0 && m_Selected < (int)m_Objects.size())
         {
@@ -225,10 +262,6 @@ public:
 
             ImGui::Separator();
             ImGui::Text("Materiau");
-            //ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse));
-            //ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular));
-
-            // Espace de Couleurs
             ImGui::ColorPicker3("Diffuse", glm::value_ptr(obj.Mat.Diffuse),
                 ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_DisplayHSV);
             ImGui::ColorPicker3("Speculaire", glm::value_ptr(obj.Mat.Specular),
@@ -255,48 +288,30 @@ public:
     }
 
 private:
-
-    std::shared_ptr<Purr::Shader>      m_WireShader;
-    std::shared_ptr<Purr::VertexArray> m_BBoxVA;
-
-    void BuildWireShader()
+    // -----------------------------------------------------------------------
+    void BuildPlaneMesh()
     {
-        std::string vs = R"(
-            #version 410 core
-            layout(location=0) in vec3 a_Position;
-            uniform mat4 u_VP;
-            uniform mat4 u_Model;
-            void main() {
-                gl_Position = u_VP * u_Model * vec4(a_Position, 1.0);
-            }
-        )";
-        std::string fs = R"(
-            #version 410 core
-            out vec4 color;
-            void main() { color = vec4(1.0, 1.0, 1.0, 1.0); }
-        )";
-        m_WireShader = std::make_shared<Purr::Shader>(vs, fs);
-    }
-
-    void BuildBBoxMesh()
-    {
+        // Plan XZ centré, avec normales (0,1,0) et UV coords
         float verts[] = {
-            -0.5f,-0.5f,-0.5f,  0.5f,-0.5f,-0.5f,
-             0.5f, 0.5f,-0.5f, -0.5f, 0.5f,-0.5f,
-            -0.5f,-0.5f, 0.5f,  0.5f,-0.5f, 0.5f,
-             0.5f, 0.5f, 0.5f, -0.5f, 0.5f, 0.5f,
+            // position          // normale    // UV
+            -0.5f, 0.0f, -0.5f,  0,1,0,       0.0f, 0.0f,
+             0.5f, 0.0f, -0.5f,  0,1,0,       1.0f, 0.0f,
+             0.5f, 0.0f,  0.5f,  0,1,0,       1.0f, 1.0f,
+            -0.5f, 0.0f,  0.5f,  0,1,0,       0.0f, 1.0f,
         };
-        uint32_t indices[] = {
-            0,1, 1,2, 2,3, 3,0,
-            4,5, 5,6, 6,7, 7,4,
-            0,4, 1,5, 2,6, 3,7,
-        };
-        m_BBoxVA = std::make_shared<Purr::VertexArray>();
+        uint32_t indices[] = { 0,1,2, 2,3,0 };
+
+        m_PlaneVA = std::make_shared<Purr::VertexArray>();
         auto vb = std::make_shared<Purr::VertexBuffer>(verts, sizeof(verts));
-        vb->SetLayout({ { Purr::ShaderDataType::Float3, "a_Position" } });
-        m_BBoxVA->AddVertexBuffer(vb);
-        m_BBoxVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(indices, 24));
+        vb->SetLayout({
+            { Purr::ShaderDataType::Float3, "a_Position" },
+            { Purr::ShaderDataType::Float3, "a_Normal"   },
+            { Purr::ShaderDataType::Float2, "a_TexCoord" },
+            });
+        m_PlaneVA->AddVertexBuffer(vb);
+        m_PlaneVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(indices, 6));
     }
+
     void BuildCubeMesh()
     {
         float verts[] = {
@@ -337,14 +352,11 @@ private:
             #version 410 core
             layout(location=0) in vec3 a_Position;
             layout(location=1) in vec3 a_Normal;
-
             uniform mat4 u_VP;
             uniform mat4 u_Model;
             uniform mat4 u_NormalMat;
-
             out vec3 v_FragPos;
             out vec3 v_Normal;
-
             void main() {
                 vec4 worldPos = u_Model * vec4(a_Position, 1.0);
                 v_FragPos     = vec3(worldPos);
@@ -352,83 +364,146 @@ private:
                 gl_Position   = u_VP * worldPos;
             }
         )";
-
         std::string fs = R"(
             #version 410 core
-
             in vec3 v_FragPos;
             in vec3 v_Normal;
-
-            struct LightData {
-                vec3  Position;
-                vec3  Color;
-                float Intensity;
-                float Constant;
-                float Linear;
-                float Quadratic;
-            };
-
+            struct LightData { vec3 Position; vec3 Color; float Intensity; float Constant; float Linear; float Quadratic; };
             uniform LightData u_Lights[4];
-            uniform float     u_AmbientStrength;
-            uniform vec3      u_CamPos;
-
+            uniform float u_AmbientStrength;
+            uniform vec3  u_CamPos;
             uniform vec3  u_MatAmbient;
             uniform vec3  u_MatDiffuse;
             uniform vec3  u_MatSpecular;
             uniform float u_MatShininess;
             uniform int   u_IllumModel;
-
             out vec4 color;
-
             void main() {
                 vec3 N = normalize(v_Normal);
                 vec3 V = normalize(u_CamPos - v_FragPos);
-
-                // Ambiant global
                 vec3 result = u_AmbientStrength * u_MatAmbient;
-
-                for (int i = 0; i < 4; i++)
-                {
+                for (int i = 0; i < 4; i++) {
                     if (u_Lights[i].Intensity <= 0.0) continue;
-
-                    vec3  L    = normalize(u_Lights[i].Position - v_FragPos);
-                    float dist = length(u_Lights[i].Position - v_FragPos);
-                    float att  = u_Lights[i].Intensity / (
-                        u_Lights[i].Constant +
-                        u_Lights[i].Linear    * dist +
-                        u_Lights[i].Quadratic * dist * dist
-                    );
-
-                    vec3 lightC = u_Lights[i].Color * att;
-
-                    // Diffuse
-                    float diff   = max(dot(N, L), 0.0);
-                    vec3 diffuse = diff * lightC * u_MatDiffuse;
-
-                    // Speculaire
+                    vec3  L   = normalize(u_Lights[i].Position - v_FragPos);
+                    float d   = length(u_Lights[i].Position - v_FragPos);
+                    float att = u_Lights[i].Intensity / (u_Lights[i].Constant + u_Lights[i].Linear*d + u_Lights[i].Quadratic*d*d);
+                    vec3 lc   = u_Lights[i].Color * att;
+                    vec3 diff = max(dot(N,L),0.0) * lc * u_MatDiffuse;
                     vec3 spec = vec3(0.0);
-                    if (u_IllumModel == 1) {
-                        vec3  R = reflect(-L, N);
-                        float s = pow(max(dot(V, R), 0.0), u_MatShininess);
-                        spec    = s * lightC * u_MatSpecular;
-                    } else if (u_IllumModel == 2) {
-                        vec3  H = normalize(L + V);
-                        float s = pow(max(dot(N, H), 0.0), u_MatShininess);
-                        spec    = s * lightC * u_MatSpecular;
-                    }
-
-                    result += diffuse + spec;
+                    if (u_IllumModel==1){ vec3 R=reflect(-L,N); spec=pow(max(dot(V,R),0.0),u_MatShininess)*lc*u_MatSpecular; }
+                    else if (u_IllumModel==2){ vec3 H=normalize(L+V); spec=pow(max(dot(N,H),0.0),u_MatShininess)*lc*u_MatSpecular; }
+                    result += diff + spec;
                 }
-
                 color = vec4(result, 1.0);
             }
         )";
         m_Shader = std::make_shared<Purr::Shader>(vs, fs);
     }
 
+    void BuildTexturedShader()
+    {
+        std::string vs = R"(
+            #version 410 core
+            layout(location=0) in vec3 a_Position;
+            layout(location=1) in vec3 a_Normal;
+            layout(location=2) in vec2 a_TexCoord;
+            uniform mat4 u_VP;
+            uniform mat4 u_Model;
+            uniform mat4 u_NormalMat;
+            out vec3 v_FragPos;
+            out vec3 v_Normal;
+            out vec2 v_TexCoord;
+            void main() {
+                vec4 worldPos = u_Model * vec4(a_Position, 1.0);
+                v_FragPos   = vec3(worldPos);
+                v_Normal    = normalize(mat3(u_NormalMat) * a_Normal);
+                v_TexCoord  = a_TexCoord;
+                gl_Position = u_VP * worldPos;
+            }
+        )";
+        std::string fs = R"(
+            #version 410 core
+            in vec3 v_FragPos;
+            in vec3 v_Normal;
+            in vec2 v_TexCoord;
+            struct LightData { vec3 Position; vec3 Color; float Intensity; float Constant; float Linear; float Quadratic; };
+            uniform LightData u_Lights[4];
+            uniform float u_AmbientStrength;
+            uniform vec3  u_CamPos;
+            uniform vec3  u_MatDiffuse;
+            uniform vec3  u_MatSpecular;
+            uniform float u_MatShininess;
+            uniform int   u_IllumModel;
+            uniform sampler2D u_Texture;
+            out vec4 color;
+            void main() {
+                vec3 texColor = texture(u_Texture, v_TexCoord * 4.0).rgb * u_MatDiffuse;
+                vec3 N = normalize(v_Normal);
+                vec3 V = normalize(u_CamPos - v_FragPos);
+                vec3 result = u_AmbientStrength * texColor;
+                for (int i = 0; i < 4; i++) {
+                    if (u_Lights[i].Intensity <= 0.0) continue;
+                    vec3  L   = normalize(u_Lights[i].Position - v_FragPos);
+                    float d   = length(u_Lights[i].Position - v_FragPos);
+                    float att = u_Lights[i].Intensity / (u_Lights[i].Constant + u_Lights[i].Linear*d + u_Lights[i].Quadratic*d*d);
+                    vec3 lc   = u_Lights[i].Color * att;
+                    vec3 diff = max(dot(N,L),0.0) * lc * texColor;
+                    vec3 spec = vec3(0.0);
+                    if (u_IllumModel==1){ vec3 R=reflect(-L,N); spec=pow(max(dot(V,R),0.0),u_MatShininess)*lc*u_MatSpecular; }
+                    else if (u_IllumModel==2){ vec3 H=normalize(L+V); spec=pow(max(dot(N,H),0.0),u_MatShininess)*lc*u_MatSpecular; }
+                    result += diff + spec;
+                }
+                color = vec4(result, 1.0);
+            }
+        )";
+        m_TexShader = std::make_shared<Purr::Shader>(vs, fs);
+    }
+
+    void BuildWireShader()
+    {
+        std::string vs = R"(
+            #version 410 core
+            layout(location=0) in vec3 a_Position;
+            uniform mat4 u_VP;
+            uniform mat4 u_Model;
+            void main() { gl_Position = u_VP * u_Model * vec4(a_Position, 1.0); }
+        )";
+        std::string fs = R"(
+            #version 410 core
+            out vec4 color;
+            void main() { color = vec4(1.0, 1.0, 1.0, 1.0); }
+        )";
+        m_WireShader = std::make_shared<Purr::Shader>(vs, fs);
+    }
+
+    void BuildBBoxMesh()
+    {
+        float verts[] = {
+            -0.5f,-0.5f,-0.5f,  0.5f,-0.5f,-0.5f,
+             0.5f, 0.5f,-0.5f, -0.5f, 0.5f,-0.5f,
+            -0.5f,-0.5f, 0.5f,  0.5f,-0.5f, 0.5f,
+             0.5f, 0.5f, 0.5f, -0.5f, 0.5f, 0.5f,
+        };
+        uint32_t indices[] = {
+            0,1, 1,2, 2,3, 3,0,
+            4,5, 5,6, 6,7, 7,4,
+            0,4, 1,5, 2,6, 3,7,
+        };
+        m_BBoxVA = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(verts, sizeof(verts));
+        vb->SetLayout({ { Purr::ShaderDataType::Float3, "a_Position" } });
+        m_BBoxVA->AddVertexBuffer(vb);
+        m_BBoxVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(indices, 24));
+    }
+
 private:
     std::shared_ptr<Purr::VertexArray> m_VA;
+    std::shared_ptr<Purr::VertexArray> m_PlaneVA;
+    std::shared_ptr<Purr::VertexArray> m_BBoxVA;
     std::shared_ptr<Purr::Shader>      m_Shader;
+    std::shared_ptr<Purr::Shader>      m_TexShader;
+    std::shared_ptr<Purr::Shader>      m_WireShader;
+    std::shared_ptr<Purr::Texture>     m_CheckerTex;
     Purr::Camera                       m_Camera;
 
     std::vector<SceneObject> m_Objects;
