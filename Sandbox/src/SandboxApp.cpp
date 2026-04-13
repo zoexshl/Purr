@@ -225,8 +225,14 @@ public:
 
             ImGui::Separator();
             ImGui::Text("Materiau");
-            ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse));
-            ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular));
+            //ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse));
+            //ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular));
+
+            // Espace de Couleurs
+            ImGui::ColorPicker3("Diffuse", glm::value_ptr(obj.Mat.Diffuse),
+                ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_DisplayHSV);
+            ImGui::ColorPicker3("Speculaire", glm::value_ptr(obj.Mat.Specular),
+                ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_DisplayHSV);
             ImGui::SliderFloat("Brillance", &obj.Mat.Shininess, 1.0f, 256.0f);
 
             ImGui::Separator();
