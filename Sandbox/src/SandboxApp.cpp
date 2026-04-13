@@ -62,6 +62,11 @@ struct SceneObject {
 };
 
 // -----------------------------------------------------------------------
+// Gizmo axis enum
+// -----------------------------------------------------------------------
+enum class GizmoAxis { None, X, Y, Z };
+
+// -----------------------------------------------------------------------
 // ExampleLayer
 // -----------------------------------------------------------------------
 class ExampleLayer : public Purr::Layer {
@@ -71,6 +76,7 @@ public:
         BuildCubeMesh(); BuildPlaneMesh();
         BuildShader(); BuildTexturedShader();
         BuildWireShader(); BuildBBoxMesh();
+        BuildGizmoShader(); BuildArrowMesh();
 
         m_CheckerTex = std::make_shared<Purr::Texture>(128, 128, 0xFFB97FFF);
 
@@ -108,7 +114,7 @@ public:
 
     void OnUpdate() override
     {
-        // Resize framebuffer si viewport a changé
+        // Resize framebuffer si viewport a change
         if (m_ViewportSize.x > 0 && m_ViewportSize.y > 0)
         {
             auto& spec = m_Framebuffer->GetSpec();
@@ -119,10 +125,66 @@ public:
             }
         }
 
-        // Orbite seulement si souris dans le viewport
         ImGuiIO& io = ImGui::GetIO();
+
+        // Orbite (clic droit, seulement si pas en train de dragger le gizmo)
         if (m_ViewportHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
             m_Camera.Orbit(io.MouseDelta.x * 0.4f, -io.MouseDelta.y * 0.4f);
+
+        // --- Gizmo input (ImGui direct, plus fiable que le systeme d'events) ---
+        if (m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_Selected >= 0 && !m_GizmoDragging)
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
+            glm::vec2 ndc = { mp.x / m_ViewportSize.x * 2.0f - 1.0f,
+                              1.0f - mp.y / m_ViewportSize.y * 2.0f };
+            m_ActiveAxis = HitTestGizmo(ndc);
+            m_GizmoDragging = (m_ActiveAxis != GizmoAxis::None);
+        }
+
+        if (m_GizmoDragging && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && m_Selected >= 0)
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            glm::vec2 delta = { io.MouseDelta.x / m_ViewportSize.x * 2.0f,
+                               -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
+
+            glm::vec3& pos = m_Objects[m_Selected].Position;
+            glm::vec3 axisDir = (m_ActiveAxis == GizmoAxis::X) ? glm::vec3(1, 0, 0) :
+                (m_ActiveAxis == GizmoAxis::Y) ? glm::vec3(0, 1, 0) :
+                glm::vec3(0, 0, 1);
+
+            glm::mat4 vp = m_Camera.GetViewProjection();
+            auto proj2D = [&](glm::vec3 p) -> glm::vec2 {
+                glm::vec4 c = vp * glm::vec4(p, 1.0f);
+                return glm::vec2(c.x / c.w, c.y / c.w);
+                };
+
+            glm::vec2 screenAxis = proj2D(pos + axisDir) - proj2D(pos);
+            float screenLen = glm::length(screenAxis);
+            if (screenLen > 0.0001f)
+            {
+                float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
+                pos += axisDir * t;
+            }
+        }
+
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        {
+            m_GizmoDragging = false;
+            m_ActiveAxis = GizmoAxis::None;
+        }
+
+        // Hover highlight
+        if (!m_GizmoDragging && m_ViewportHovered && m_Selected >= 0)
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
+            glm::vec2 ndc = { mp.x / m_ViewportSize.x * 2.0f - 1.0f,
+                              1.0f - mp.y / m_ViewportSize.y * 2.0f };
+            m_HoveredAxis = HitTestGizmo(ndc);
+        }
+        else if (!m_ViewportHovered && !m_GizmoDragging)
+            m_HoveredAxis = GizmoAxis::None;
 
         // --- Render dans le framebuffer ---
         m_Framebuffer->Bind();
@@ -196,6 +258,46 @@ public:
             Purr::RenderCommand::DrawLines(m_BBoxVA);
         }
 
+        // ---- Gizmo (toujours par-dessus la geometrie) ----
+        if (m_Selected >= 0 && m_Selected < (int)m_Objects.size())
+        {
+            auto& obj = m_Objects[m_Selected];
+            float scale = m_Camera.GetRadius() * 0.12f;
+
+            // Rotations pour orienter la fleche +X vers Y et Z
+            glm::mat4 rotToY = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 0, 1));
+            glm::mat4 rotToZ = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0, 1, 0));
+
+            struct AxisDesc { glm::mat4 rot; glm::vec4 color; GizmoAxis axis; };
+            AxisDesc axes[3] = {
+                { glm::mat4(1.0f), { 1.0f, 0.15f, 0.15f, 1.0f }, GizmoAxis::X },
+                { rotToY,          { 0.15f, 1.0f, 0.15f, 1.0f }, GizmoAxis::Y },
+                { rotToZ,          { 0.15f, 0.15f, 1.0f, 1.0f }, GizmoAxis::Z },
+            };
+
+            Purr::RenderCommand::SetDepthTest(false);
+            m_GizmoShader->Bind();
+            m_GizmoShader->SetMat4("u_VP", m_Camera.GetViewProjection());
+
+            for (auto& a : axes)
+            {
+                glm::mat4 model =
+                    glm::translate(glm::mat4(1.0f), obj.Position) *
+                    a.rot *
+                    glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+
+                m_GizmoShader->SetMat4("u_Model", model);
+
+                bool highlight = (m_HoveredAxis == a.axis) || (m_GizmoDragging && m_ActiveAxis == a.axis);
+                glm::vec4 col = highlight ? glm::vec4(1.0f, 1.0f, 1.0f, 1.0f) : a.color;
+                m_GizmoShader->SetFloat4("u_Color", col);
+
+                Purr::RenderCommand::DrawLines(m_ArrowVA);
+            }
+
+            Purr::RenderCommand::SetDepthTest(true);
+        }
+
         m_Framebuffer->Unbind();
     }
 
@@ -207,6 +309,11 @@ public:
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::Begin("Viewport");
         m_ViewportHovered = ImGui::IsWindowHovered();
+
+        // Capturer la position du contenu du viewport (pour le hit-test gizmo)
+        ImVec2 contentPos = ImGui::GetCursorScreenPos();
+        m_ViewportPos = { contentPos.x, contentPos.y };
+
         ImVec2 size = ImGui::GetContentRegionAvail();
         m_ViewportSize = { size.x, size.y };
         uint64_t texID = m_Framebuffer->GetColorAttachmentID();
@@ -310,14 +417,65 @@ public:
     void OnEvent(Purr::Event& e) override
     {
         if (!m_ViewportHovered) return;
+
         Purr::EventDispatcher dispatcher(e);
+
+        // Scroll -> zoom camera
         dispatcher.Dispatch<Purr::MouseScrolledEvent>([this](Purr::MouseScrolledEvent& e) {
             m_Camera.Zoom(e.GetYOffset() * 0.3f);
             return false;
             });
+
     }
 
 private:
+    // -----------------------------------------------------------------------
+    // Hit-test : retourne l'axe du gizmo le plus proche du curseur (NDC)
+    // -----------------------------------------------------------------------
+    GizmoAxis HitTestGizmo(glm::vec2 mouseNDC)
+    {
+        if (m_Selected < 0 || m_Selected >= (int)m_Objects.size())
+            return GizmoAxis::None;
+
+        glm::vec3 pos = m_Objects[m_Selected].Position;
+        float scale = m_Camera.GetRadius() * 0.12f;
+        glm::mat4 vp = m_Camera.GetViewProjection();
+
+        auto proj2D = [&](glm::vec3 p) -> glm::vec2 {
+            glm::vec4 c = vp * glm::vec4(p, 1.0f);
+            return glm::vec2(c.x / c.w, c.y / c.w);
+            };
+
+        glm::vec2 base = proj2D(pos);
+
+        struct AxisInfo { glm::vec3 dir; GizmoAxis axis; };
+        AxisInfo axes[3] = {
+            { {1,0,0}, GizmoAxis::X },
+            { {0,1,0}, GizmoAxis::Y },
+            { {0,0,1}, GizmoAxis::Z },
+        };
+
+        const float kThreshold = 0.05f; // NDC units (~2-3% of screen width)
+        float bestDist = kThreshold;
+        GizmoAxis result = GizmoAxis::None;
+
+        for (auto& a : axes)
+        {
+            glm::vec2 tip = proj2D(pos + a.dir * scale);
+            // Distance point -> segment [base, tip]
+            glm::vec2 ab = tip - base;
+            glm::vec2 ap = mouseNDC - base;
+            float denom = glm::max(glm::dot(ab, ab), 0.0001f);
+            float t = glm::clamp(glm::dot(ap, ab) / denom, 0.0f, 1.0f);
+            float d = glm::length(ap - t * ab);
+            if (d < bestDist) { bestDist = d; result = a.axis; }
+        }
+        return result;
+    }
+
+    // -----------------------------------------------------------------------
+    // Mesh & shader builders
+    // -----------------------------------------------------------------------
     void SetupDockspace()
     {
         static bool firstTime = true;
@@ -347,14 +505,12 @@ private:
             ImGui::DockBuilderAddNode(dockID, ImGuiDockNodeFlags_None);
             ImGui::DockBuilderSetNodeSize(dockID, viewport->Size);
 
-            // Layout : gauche | centre | droite
             ImGuiID left, rest;
             ImGui::DockBuilderSplitNode(dockID, ImGuiDir_Left, 0.18f, &left, &rest);
 
             ImGuiID center, right;
             ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, 0.22f, &right, &center);
 
-            // Gauche : Scene (haut) + Lumieres (bas)
             ImGuiID leftTop, leftBottom;
             ImGui::DockBuilderSplitNode(left, ImGuiDir_Up, 0.5f, &leftTop, &leftBottom);
 
@@ -369,7 +525,58 @@ private:
         ImGui::End();
     }
 
-    // --- Mesh builders ---
+    void BuildGizmoShader()
+    {
+        m_GizmoShader = std::make_shared<Purr::Shader>(
+            R"(#version 410 core
+            layout(location=0) in vec3 a_Position;
+            uniform mat4 u_VP, u_Model;
+            void main() { gl_Position = u_VP * u_Model * vec4(a_Position, 1.0); })",
+
+            R"(#version 410 core
+            uniform vec4 u_Color;
+            out vec4 color;
+            void main() { color = u_Color; })"
+        );
+    }
+
+    // Fleche orientee le long de +X, de 0 a 1.
+    // On l'applique avec une matrice de rotation pour avoir Y et Z.
+    void BuildArrowMesh()
+    {
+        //  0 : (0,    0,    0)   <- base
+        //  1 : (0.82, 0,    0)   <- debut du cone
+        //  2 : (1,    0,    0)   <- tip
+        //  3 : (0.82, 0.1,  0)
+        //  4 : (0.82,-0.1,  0)
+        //  5 : (0.82, 0,    0.1)
+        //  6 : (0.82, 0,   -0.1)
+        float v[] = {
+            0.0f,  0.0f,  0.0f,
+            0.82f, 0.0f,  0.0f,
+            1.0f,  0.0f,  0.0f,
+            0.82f, 0.1f,  0.0f,
+            0.82f,-0.1f,  0.0f,
+            0.82f, 0.0f,  0.1f,
+            0.82f, 0.0f, -0.1f,
+        };
+        // Paires GL_LINES : shaft + 4 lignes du cone vers le tip
+        uint32_t idx[] = {
+            0,1,   // shaft
+            1,2,   // axe central cone
+            3,2,   // cone haut
+            4,2,   // cone bas
+            5,2,   // cone avant
+            6,2,   // cone arriere
+        };
+
+        m_ArrowVA = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(v, sizeof(v));
+        vb->SetLayout({ { Purr::ShaderDataType::Float3, "a_Position" } });
+        m_ArrowVA->AddVertexBuffer(vb);
+        m_ArrowVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(idx, 12));
+    }
+
     void BuildPlaneMesh() {
         float verts[] = {
             -0.5f,0,-0.5f, 0,1,0, 0,0,
@@ -508,21 +715,33 @@ private:
     }
 
 private:
+    // Scene
+    std::vector<SceneObject> m_Objects;
+    int   m_Selected = 0;
+    Light m_Lights[4];
+    float m_AmbientStrength = 0.15f;
+
+    // Renderer
     std::shared_ptr<Purr::VertexArray>  m_VA, m_PlaneVA, m_BBoxVA;
     std::shared_ptr<Purr::Shader>       m_Shader, m_TexShader, m_WireShader;
     std::shared_ptr<Purr::Texture>      m_CheckerTex;
     std::shared_ptr<Purr::Framebuffer>  m_Framebuffer;
     Purr::Camera                        m_Camera;
 
-    std::vector<SceneObject> m_Objects;
-    int   m_Selected = 0;
-    Light m_Lights[4];
-    float m_AmbientStrength = 0.15f;
+    // Gizmo
+    std::shared_ptr<Purr::VertexArray>  m_ArrowVA;
+    std::shared_ptr<Purr::Shader>       m_GizmoShader;
+    GizmoAxis m_ActiveAxis = GizmoAxis::None;
+    GizmoAxis m_HoveredAxis = GizmoAxis::None;
+    bool      m_GizmoDragging = false;
 
+    // Viewport
     glm::vec2 m_ViewportSize = { 1280, 720 };
+    glm::vec2 m_ViewportPos = { 0, 0 };
     bool      m_ViewportHovered = false;
 };
 
+// -----------------------------------------------------------------------
 class Sandbox : public Purr::Application {
 public:
     Sandbox() { PushLayer(new ExampleLayer()); }

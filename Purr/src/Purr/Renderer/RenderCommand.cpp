@@ -23,4 +23,10 @@ namespace Purr {
         va->Bind();
         glDrawElements(GL_LINES, va->GetIndexBuffer()->GetCount(), GL_UNSIGNED_INT, nullptr);
     }
+
+    void RenderCommand::SetDepthTest(bool enabled)
+    {
+        if (enabled) glEnable(GL_DEPTH_TEST);
+        else         glDisable(GL_DEPTH_TEST);
+    }
 }
