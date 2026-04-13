@@ -19,6 +19,9 @@
     <Filter Include="src\Purr\ImGui">
       <UniqueIdentifier>{0FCBA9DC-FB98-9DE2-E42C-0E09D0997947}</UniqueIdentifier>
     </Filter>
+    <Filter Include="src\Purr\Renderer">
+      <UniqueIdentifier>{6B0BA6B7-D721-A44D-2099-2F6F8CEE74D5}</UniqueIdentifier>
+    </Filter>
     <Filter Include="vendor">
       <UniqueIdentifier>{B3738122-9F15-ACF8-88D0-BF4C74113349}</UniqueIdentifier>
     </Filter>
@@ -92,6 +95,18 @@
     </ClInclude>
     <ClInclude Include="src\Purr\MouseButtonCodes.h">
       <Filter>src\Purr</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Purr\Renderer\Buffer.h">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Purr\Renderer\RenderCommand.h">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Purr\Renderer\Shader.h">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Purr\Renderer\VertexArray.h">
+      <Filter>src\Purr\Renderer</Filter>
     </ClInclude>
     <ClInclude Include="src\Purr\Window.h">
       <Filter>src\Purr</Filter>
@@ -1381,6 +1396,18 @@
     </ClCompile>
     <ClCompile Include="src\Purr\Log.cpp">
       <Filter>src\Purr</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\Renderer\Buffer.cpp">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\Renderer\RenderCommand.cpp">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\Renderer\Shader.cpp">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\Renderer\VertexArray.cpp">
+      <Filter>src\Purr\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\purrpch.cpp">
       <Filter>src</Filter>

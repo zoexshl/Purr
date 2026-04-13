@@ -16,3 +16,11 @@
 // *******************************************
 
 
+// Renderer
+#include "Purr/Renderer/Shader.h"
+#include "Purr/Renderer/Buffer.h"
+#include "Purr/Renderer/VertexArray.h"
+
+#include "Purr/Renderer/RenderCommand.h" 
+
+
