@@ -24,3 +24,4 @@
 #include "Purr/Renderer/RenderCommand.h" 
 #include "Purr/Renderer/Camera.h"
 #include "Purr/Renderer/Texture.h"
+#include "Purr/Renderer/Framebuffer.h"
