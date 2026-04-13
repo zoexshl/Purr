@@ -262,6 +262,38 @@ public:
 
             ImGui::Separator();
             ImGui::Text("Materiau");
+
+            // Presets de matériaux
+            ImGui::Text("Preset materiau");
+            static const char* presetNames[] = { "Personnalise", "Or", "Plastique rouge", "Caoutchouc" };
+            static int presetIdx = 0;
+            if (ImGui::Combo("##preset", &presetIdx, presetNames, 4))
+            {
+                switch (presetIdx) {
+                case 1: // Or
+                    obj.Mat.Ambient = { 0.25f, 0.20f, 0.07f };
+                    obj.Mat.Diffuse = { 0.75f, 0.61f, 0.23f };
+                    obj.Mat.Specular = { 0.63f, 0.56f, 0.37f };
+                    obj.Mat.Shininess = 51.2f;
+                    break;
+                case 2: // Plastique rouge
+                    obj.Mat.Ambient = { 0.05f, 0.0f,  0.0f };
+                    obj.Mat.Diffuse = { 0.5f,  0.0f,  0.0f };
+                    obj.Mat.Specular = { 0.7f,  0.6f,  0.6f };
+                    obj.Mat.Shininess = 32.0f;
+                    break;
+                case 3: // Caoutchouc
+                    obj.Mat.Ambient = { 0.02f, 0.02f, 0.02f };
+                    obj.Mat.Diffuse = { 0.01f, 0.01f, 0.01f };
+                    obj.Mat.Specular = { 0.4f,  0.4f,  0.4f };
+                    obj.Mat.Shininess = 10.0f;
+                    break;
+                default: break;
+                }
+            }
+            ImGui::Separator();
+
+
             ImGui::ColorPicker3("Diffuse", glm::value_ptr(obj.Mat.Diffuse),
                 ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_DisplayHSV);
             ImGui::ColorPicker3("Speculaire", glm::value_ptr(obj.Mat.Specular),
