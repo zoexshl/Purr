@@ -99,6 +99,9 @@
     <ClInclude Include="src\Purr\Renderer\Buffer.h">
       <Filter>src\Purr\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\Purr\Renderer\Camera.h">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="src\Purr\Renderer\RenderCommand.h">
       <Filter>src\Purr\Renderer</Filter>
     </ClInclude>
@@ -1398,6 +1401,9 @@
       <Filter>src\Purr</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\Renderer\Buffer.cpp">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\Renderer\Camera.cpp">
       <Filter>src\Purr\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\Renderer\RenderCommand.cpp">

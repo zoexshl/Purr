@@ -23,4 +23,6 @@
 
 #include "Purr/Renderer/RenderCommand.h" 
 
+#include "Purr/Renderer/Camera.h"
+
 
