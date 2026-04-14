@@ -126,6 +126,12 @@ public:
         }
 
         ImGuiIO& io = ImGui::GetIO();
+        // Undo / Redo -----  Ctrl+Z/ Ctrl+Y
+        if (!io.WantTextInput)
+        {
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) Undo();
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) Redo();
+        }
 
         // Orbite (clic droit, seulement si pas en train de dragger le gizmo)
         if (m_ViewportHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
@@ -140,6 +146,7 @@ public:
                               1.0f - mp.y / m_ViewportSize.y * 2.0f };
             m_ActiveAxis = HitTestGizmo(ndc);
             m_GizmoDragging = (m_ActiveAxis != GizmoAxis::None);
+            if (m_GizmoDragging) SaveSnapshot();
         }
 
         if (m_GizmoDragging && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && m_Selected >= 0)
@@ -338,17 +345,41 @@ public:
             SceneObject obj;
             obj.Name = "Cube " + std::to_string(m_Objects.size() + 1);
             obj.Mat.Diffuse = { (float)rand() / RAND_MAX,(float)rand() / RAND_MAX,(float)rand() / RAND_MAX };
+            SaveSnapshot();
             m_Objects.push_back(obj);
             m_Selected = (int)m_Objects.size() - 1;
         }
         if (m_Selected >= 0 && m_Selected < (int)m_Objects.size()) {
             ImGui::SameLine();
             if (ImGui::Button("- Supprimer")) {
+                SaveSnapshot();
                 m_Objects.erase(m_Objects.begin() + m_Selected);
                 m_Selected = glm::max(0, m_Selected - 1);
             }
         }
+
+
+
+        // ----- Undo / Redo -------------------------------------------------
+        ImGui::Separator();
+        bool canUndo = !m_UndoStack.empty();
+        bool canRedo = !m_RedoStack.empty();
+
+
+        if (!canUndo) ImGui::BeginDisabled();
+        if (ImGui::Button("< Undo")) Undo();
+        if (!canUndo) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+
+        if (!canRedo) ImGui::BeginDisabled();
+        if (ImGui::Button("> Redo")) Redo();
+        if (!canRedo) ImGui::EndDisabled();
+
         ImGui::End();
+
+    
+
 
         // ---- Lumieres -----------------------------------------------------
         ImGui::Begin("Lumieres");
@@ -377,8 +408,11 @@ public:
             ImGui::Text("%s", obj.Name.c_str());
             ImGui::Separator();
             ImGui::DragFloat3("Position", glm::value_ptr(obj.Position), 0.05f);
+            if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
             ImGui::DragFloat3("Rotation", glm::value_ptr(obj.Rotation), 0.5f);
+            if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
             ImGui::DragFloat3("Scale", glm::value_ptr(obj.Scale), 0.01f, 0.01f, 10.0f);
+            if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
             ImGui::Separator();
             ImGui::Text("Texture");
             if (obj.Tex && !obj.TexPath.empty()) {
@@ -426,6 +460,31 @@ public:
             return false;
             });
 
+    }
+
+    // Undo / Redo ----------------------------------------------------------------
+    void SaveSnapshot()
+    {
+        m_UndoStack.push_back(m_Objects);
+        if ((int)m_UndoStack.size() > k_MaxHistory)
+            m_UndoStack.erase(m_UndoStack.begin());
+        m_RedoStack.clear();
+    }
+    void Undo()
+    {
+        if (m_UndoStack.empty()) return;
+        m_RedoStack.push_back(m_Objects);
+        m_Objects = m_UndoStack.back();
+        m_UndoStack.pop_back();
+        m_Selected = glm::clamp(m_Selected, -1, (int)m_Objects.size() - 1);
+    }
+    void Redo()
+    {
+        if (m_RedoStack.empty()) return;
+        m_UndoStack.push_back(m_Objects);
+        m_Objects = m_RedoStack.back();
+        m_RedoStack.pop_back();
+        m_Selected = glm::clamp(m_Selected, -1, (int)m_Objects.size() - 1);
     }
 
 private:
@@ -739,6 +798,11 @@ private:
     glm::vec2 m_ViewportSize = { 1280, 720 };
     glm::vec2 m_ViewportPos = { 0, 0 };
     bool      m_ViewportHovered = false;
+
+    // Undo / Redo
+    std::vector<std::vector<SceneObject>> m_UndoStack;
+    std::vector<std::vector<SceneObject>> m_RedoStack;
+    static constexpr int k_MaxHistory = 50;
 };
 
 // -----------------------------------------------------------------------
