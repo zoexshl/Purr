@@ -440,7 +440,10 @@ public:
             bool open = ImGui::CollapsingHeader(lightNames[i]);
             if (open) {
                 ImGui::DragFloat3("Position", glm::value_ptr(m_Lights[i].Position), 0.1f);
-                ImGui::ColorEdit3("Couleur", glm::value_ptr(m_Lights[i].Color));
+                //ImGui::ColorEdit3("Couleur", glm::value_ptr(m_Lights[i].Color));
+                ImGui::ColorEdit3("Couleur", glm::value_ptr(m_Lights[i].Color), ImGuiColorEditFlags_PickerHueWheel);
+
+
                 ImGui::SliderFloat("Intensite", &m_Lights[i].Intensity, 0.0f, 3.0f);
                 ImGui::SliderFloat("Lineaire", &m_Lights[i].Linear, 0.0f, 1.0f);
                 ImGui::SliderFloat("Quadrat.", &m_Lights[i].Quadratic, 0.0f, 0.5f);
@@ -485,8 +488,15 @@ public:
                 default: break;
                 }
             }
-            ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse));
-            ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular));
+            // RBG / HSV 
+            //ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse));
+            ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse), ImGuiColorEditFlags_PickerHueWheel);
+
+
+            // ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular));
+            ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular), ImGuiColorEditFlags_PickerHueWheel);
+
+
             ImGui::SliderFloat("Brillance", &obj.Mat.Shininess, 1.0f, 256.0f);
             ImGui::Separator();
             ImGui::Text("Modele d'illumination");
