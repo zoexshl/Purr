@@ -6,6 +6,7 @@
 #include <glad/glad.h>
 #include "Input.h"
 #include "glm/glm.hpp"
+#include <GLFW/glfw3.h>  // pour glfwGetTime()
 
 namespace Purr {
 
@@ -65,12 +66,16 @@ namespace Purr {
 
 	void Application::Run()
 	{
+		float lastTime = (float)glfwGetTime();
+
 		while (m_Running)
 		{
-	
+			float now = (float)glfwGetTime();
+			float dt = now - lastTime;
+			lastTime = now;
 
 			for (Layer* layer : m_LayerStack)
-				layer->OnUpdate();
+				layer->OnUpdate(dt);
 
 
 			m_ImGuiLayer->Begin();

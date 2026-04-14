@@ -14,7 +14,9 @@ namespace Purr {
 		// Virtual : afin d'overwrite les autres layerss au besoin
 		virtual void OnAttach(){}
 		virtual void OnDetach() {}
-		virtual void OnUpdate(){}
+		//virtual void OnUpdate(){}
+		// delta time (animation)
+		virtual void OnUpdate(float dt) {}
 		virtual void OnImGuiRender(){}
 		virtual void OnEvent(Event& event) {}
 

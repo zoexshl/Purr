@@ -1384,6 +1384,7 @@
       <Filter>vendor\stb_image</Filter>
     </ClInclude>
     <ClInclude Include="src\Purr\Renderer\Framebuffer.h" />
+    <ClInclude Include="src\Purr\ObjLoader.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\Platform\Windows\WindowsInput.cpp">
@@ -1435,5 +1436,6 @@
       <Filter>vendor\stb_image</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\Renderer\Framebuffer.cpp" />
+    <ClCompile Include="src\Purr\ObjLoader.cpp" />
   </ItemGroup>
 </Project>

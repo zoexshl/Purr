@@ -7,32 +7,34 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <Windows.h>
 #include <commdlg.h>
+#include "nlohmann/json.hpp"
+#include "Purr/ObjLoader.h"
+using json = nlohmann::json;
 
 // -----------------------------------------------------------------------
 // File dialog
 // -----------------------------------------------------------------------
-static std::string OpenFileDialog()
+static std::string OpenFileDialog(const char* filter = "All Files\0*.*\0")
 {
     char filename[MAX_PATH] = {};
     OPENFILENAMEA ofn = {};
     ofn.lStructSize = sizeof(ofn);
-    ofn.lpstrFilter = "Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tga\0All Files\0*.*\0";
+    ofn.lpstrFilter = filter;
     ofn.lpstrFile = filename;
     ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrTitle = "Choisir une texture";
+    ofn.lpstrTitle = "Ouvrir un fichier";
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
     if (GetOpenFileNameA(&ofn)) return std::string(filename);
     return "";
 }
-
 // -----------------------------------------------------------------------
 // Structs
 // -----------------------------------------------------------------------
 enum class IlluminationModel { Lambert = 0, Phong, BlinnPhong };
 static const char* s_ModelNames[] = { "Lambert", "Phong", "Blinn-Phong" };
 
-enum class PrimitiveType { Cube = 0, Plane, Triangle, Circle, RegularPolygon, Ellipse };
-static const char* s_PrimNames[] = { "Cube", "Plan", "Triangle", "Cercle", "Polygone regulier", "Ellipse" };
+enum class PrimitiveType { Cube = 0, Plane, Triangle, Circle, RegularPolygon, Ellipse, Custom };
+static const char* s_PrimNames[] = { "Cube", "Plan", "Triangle", "Cercle", "Polygone regulier", "Ellipse", "Modele OBJ" };
 
 struct Light {
     glm::vec3 Position = { 0.0f, 3.0f, 0.0f };
@@ -54,6 +56,7 @@ struct SceneObject {
     PrimitiveType Type = PrimitiveType::Cube;
     std::shared_ptr<Purr::Texture> Tex = nullptr;
     std::string TexPath = "";
+    std::string MeshPath = "";
 
     glm::mat4 GetTransform() const {
         glm::mat4 t = glm::translate(glm::mat4(1.0f), Position);
@@ -116,7 +119,7 @@ public:
 
     void OnAttach() override { Purr::RenderCommand::EnableDepthTest(); }
 
-    void OnUpdate() override
+    void OnUpdate(float dt) override
     {
         // Resize framebuffer si viewport a change
         if (m_ViewportSize.x > 0 && m_ViewportSize.y > 0)
@@ -224,6 +227,8 @@ public:
         {
             glm::mat4 model = obj.GetTransform();
             glm::mat4 normalMat = glm::transpose(glm::inverse(model));
+
+            /*
             auto& va = [&]() -> std::shared_ptr<Purr::VertexArray>&{
                 switch (obj.Type) {
                 case PrimitiveType::Plane:         return m_PlaneVA;
@@ -234,6 +239,10 @@ public:
                 default:                           return m_VA; // Cube
                 }
                 }();
+            */
+            auto va = GetMeshForObject(obj);
+            if (!va) continue;  // mesh pas encore chargé ou fichier invalide
+
 
             if (obj.Tex) {
                 m_TexShader->Bind();
@@ -247,6 +256,7 @@ public:
                 m_TexShader->SetInt("u_Texture", 0);
                 obj.Tex->Bind(0);
                 Purr::RenderCommand::DrawIndexed(va);
+                //GetMeshForObject(obj);
             }
             else {
                 m_Shader->Bind();
@@ -259,6 +269,7 @@ public:
                 m_Shader->SetFloat("u_MatShininess", obj.Mat.Shininess);
                 m_Shader->SetInt("u_IllumModel", (int)obj.Mat.Model);
                 Purr::RenderCommand::DrawIndexed(va);
+                //GetMeshForObject(obj);
             }
         }
 
@@ -428,7 +439,40 @@ public:
         if (ImGui::Button("> Redo")) Redo();
         if (!canRedo) ImGui::EndDisabled();
 
+        ImGui::Separator();
 
+        if (ImGui::Button("Sauver scene")) {
+            std::string p = SaveFileDialog();
+            if (!p.empty()) SaveScene(p);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Charger scene")) {
+            std::string p = OpenFileDialog("Scene JSON\0*.json\0All Files\0*.*\0");
+            if (!p.empty()) LoadScene(p);
+        }
+
+        //ImGui::SameLine();
+        ImGui::Separator();
+
+        if (ImGui::Button("Importer OBJ")) {
+            std::string p = OpenFileDialog("Modeles OBJ\0*.obj\0All Files\0*.*\0");
+            if (!p.empty()) {
+                SceneObject obj;
+                obj.Name = "Modele OBJ";
+                obj.Type = PrimitiveType::Custom;
+                obj.MeshPath = p;
+
+                // Auto-charge la texture MTL
+                std::string texPath;
+                Purr::LoadOBJ(p, texPath);  // charge dans le cache + récupère tex
+                if (!texPath.empty()) {
+                    obj.TexPath = texPath;
+                    obj.Tex = std::make_shared<Purr::Texture>(texPath);
+                }
+
+                m_Objects.push_back(obj);
+            }
+        }
 
 
 
@@ -524,7 +568,8 @@ public:
             }
             else { ImGui::TextDisabled("Aucune texture"); }
             if (ImGui::Button("Charger texture...")) {
-                std::string path = OpenFileDialog();
+                //std::string path = OpenFileDialog();
+                std::string path = OpenFileDialog("Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tga\0All Files\0*.*\0");
                 if (!path.empty()) { obj.Tex = std::make_shared<Purr::Texture>(path); obj.TexPath = path; }
             }
             if (obj.Tex) { ImGui::SameLine(); if (ImGui::Button("Retirer")) { obj.Tex = nullptr; obj.TexPath = ""; } }
@@ -618,9 +663,108 @@ public:
             m_HistB[pixels[i * 3 + 2]]++;
         }
     }
+    void SaveScene(const std::string& path)
+    {
+        json j;
+        j["objects"] = json::array();
+        for (auto& obj : m_Objects)
+        {
+            json o;
+            o["name"] = obj.Name;
+            o["type"] = (int)obj.Type;
+            o["meshPath"] = obj.MeshPath;
+            o["texPath"] = obj.TexPath;
+            o["pos"] = { obj.Position.x, obj.Position.y, obj.Position.z };
+            o["rot"] = { obj.Rotation.x, obj.Rotation.y, obj.Rotation.z };
+            o["scale"] = { obj.Scale.x,    obj.Scale.y,    obj.Scale.z };
+            o["diffuse"] = { obj.Mat.Diffuse.x,  obj.Mat.Diffuse.y,  obj.Mat.Diffuse.z };
+            o["specular"] = { obj.Mat.Specular.x, obj.Mat.Specular.y, obj.Mat.Specular.z };
+            o["shininess"] = obj.Mat.Shininess;
+            o["illum"] = (int)obj.Mat.Model;
+            j["objects"].push_back(o);
+        }
+        std::ofstream f(path);
+        f << j.dump(2);
+    }
 
+    static std::string SaveFileDialog(const char* filter = "Scene JSON\0*.json\0")
+    {
+        char filename[MAX_PATH] = {};
+        OPENFILENAMEA ofn = {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.lpstrFilter = filter;
+        ofn.lpstrFile = filename;
+        ofn.nMaxFile = MAX_PATH;
+        ofn.lpstrTitle = "Sauver la scene";
+        ofn.lpstrDefExt = "json";
+        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+        if (GetSaveFileNameA(&ofn)) return std::string(filename);
+        return "";
+    }
+
+    void LoadScene(const std::string& path)
+    {
+        std::ifstream f(path);
+        if (!f.is_open()) return;
+        json j; f >> j;
+
+        m_Objects.clear();
+        m_MeshCache.clear();
+        m_Selected = m_Objects.empty() ? -1 : 0;
+
+        for (auto& o : j["objects"])
+        {
+            SceneObject obj;
+            obj.Name = o["name"];
+            obj.Type = (PrimitiveType)(int)o["type"];
+            obj.MeshPath = o.value("meshPath", "");
+            obj.TexPath = o.value("texPath", "");
+            obj.Position = { o["pos"][0],   o["pos"][1],   o["pos"][2] };
+            obj.Rotation = { o["rot"][0],   o["rot"][1],   o["rot"][2] };
+            obj.Scale = { o["scale"][0], o["scale"][1], o["scale"][2] };
+            obj.Mat.Diffuse = { o["diffuse"][0],  o["diffuse"][1],  o["diffuse"][2] };
+            obj.Mat.Specular = { o["specular"][0], o["specular"][1], o["specular"][2] };
+            obj.Mat.Shininess = o["shininess"];
+            obj.Mat.Model = (IlluminationModel)(int)o["illum"];
+            if (!obj.TexPath.empty())
+                obj.Tex = std::make_shared<Purr::Texture>(obj.TexPath);
+            m_Objects.push_back(obj);
+        }
+
+        // regarder la texture (généré procéduralement)
+        for (auto& obj : m_Objects)
+        {
+            if (obj.Type == PrimitiveType::Plane && obj.TexPath.empty())
+                obj.Tex = m_CheckerTex;
+        }
+    }
 
 private:
+
+    std::shared_ptr<Purr::VertexArray> GetMeshForObject(const SceneObject& obj)
+    {
+        if (obj.Type == PrimitiveType::Custom) {
+            auto it = m_MeshCache.find(obj.MeshPath);
+            if (it != m_MeshCache.end()) return it->second;
+
+            std::string texPath;
+            auto va = Purr::LoadOBJ(obj.MeshPath, texPath);
+
+
+            if (va) {
+                m_MeshCache[obj.MeshPath] = va;
+            }
+            return va;
+        }
+        switch (obj.Type) {
+        case PrimitiveType::Plane:         return m_PlaneVA;
+        case PrimitiveType::Triangle:      return m_TriangleVA;
+        case PrimitiveType::Circle:        return m_CircleVA;
+        case PrimitiveType::RegularPolygon:return m_RegPolygonVA;
+        case PrimitiveType::Ellipse:       return m_EllipseVA;
+        default:                           return m_VA; // Cube
+        }
+    }
 
 
 
@@ -1023,6 +1167,9 @@ private:
 
     // Histogramme
     std::vector<int> m_HistR, m_HistG, m_HistB;
+
+    // Cache de mesh
+    std::unordered_map<std::string, std::shared_ptr<Purr::VertexArray>> m_MeshCache;
 };
 
 // -----------------------------------------------------------------------

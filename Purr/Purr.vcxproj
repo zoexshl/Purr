@@ -172,6 +172,7 @@
     <ClInclude Include="src\Purr\LayerStack.h" />
     <ClInclude Include="src\Purr\Log.h" />
     <ClInclude Include="src\Purr\MouseButtonCodes.h" />
+    <ClInclude Include="src\Purr\ObjLoader.h" />
     <ClInclude Include="src\Purr\Renderer\Buffer.h" />
     <ClInclude Include="src\Purr\Renderer\Camera.h" />
     <ClInclude Include="src\Purr\Renderer\Framebuffer.h" />
@@ -611,6 +612,7 @@
     <ClCompile Include="src\Purr\Layer.cpp" />
     <ClCompile Include="src\Purr\LayerStack.cpp" />
     <ClCompile Include="src\Purr\Log.cpp" />
+    <ClCompile Include="src\Purr\ObjLoader.cpp" />
     <ClCompile Include="src\Purr\Renderer\Buffer.cpp" />
     <ClCompile Include="src\Purr\Renderer\Camera.cpp" />
     <ClCompile Include="src\Purr\Renderer\Framebuffer.cpp" />
