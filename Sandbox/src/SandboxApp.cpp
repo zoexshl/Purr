@@ -31,6 +31,9 @@ static std::string OpenFileDialog()
 enum class IlluminationModel { Lambert = 0, Phong, BlinnPhong };
 static const char* s_ModelNames[] = { "Lambert", "Phong", "Blinn-Phong" };
 
+enum class PrimitiveType { Cube = 0, Plane, Triangle, Circle, RegularPolygon, Ellipse };
+static const char* s_PrimNames[] = { "Cube", "Plan", "Triangle", "Cercle", "Polygone regulier", "Ellipse" };
+
 struct Light {
     glm::vec3 Position = { 0.0f, 3.0f, 0.0f };
     glm::vec3 Color = { 1.0f, 1.0f, 1.0f };
@@ -48,7 +51,7 @@ struct SceneObject {
     std::string Name;
     glm::vec3 Position = { 0,0,0 }, Rotation = { 0,0,0 }, Scale = { 1,1,1 };
     Material Mat;
-    bool IsPlane = false;
+    PrimitiveType Type = PrimitiveType::Cube;
     std::shared_ptr<Purr::Texture> Tex = nullptr;
     std::string TexPath = "";
 
@@ -74,6 +77,7 @@ public:
     ExampleLayer() : Layer("Example"), m_Camera(60.0f, 1280.0f / 720.0f)
     {
         BuildCubeMesh(); BuildPlaneMesh();
+        BuildTriangleMesh(); BuildCircleMesh(); BuildRegPolygonMesh(); BuildEllipseMesh();
         BuildShader(); BuildTexturedShader();
         BuildWireShader(); BuildBBoxMesh();
         BuildGizmoShader(); BuildArrowMesh();
@@ -97,7 +101,7 @@ public:
         c.Mat.Diffuse = { 0.5f,1.0f,0.5f }; c.Mat.Model = IlluminationModel::Lambert;
         m_Objects.push_back(c);
 
-        SceneObject plane; plane.Name = "Plan (sol)"; plane.IsPlane = true;
+        SceneObject plane; plane.Name = "Plan (sol)"; plane.Type = PrimitiveType::Plane;
         plane.Position = { 0,-0.5f,0 }; plane.Scale = { 6,1,6 };
         plane.Mat.Model = IlluminationModel::Lambert;
         plane.Tex = m_CheckerTex;
@@ -220,7 +224,16 @@ public:
         {
             glm::mat4 model = obj.GetTransform();
             glm::mat4 normalMat = glm::transpose(glm::inverse(model));
-            auto& va = obj.IsPlane ? m_PlaneVA : m_VA;
+            auto& va = [&]() -> std::shared_ptr<Purr::VertexArray>&{
+                switch (obj.Type) {
+                case PrimitiveType::Plane:         return m_PlaneVA;
+                case PrimitiveType::Triangle:      return m_TriangleVA;
+                case PrimitiveType::Circle:        return m_CircleVA;
+                case PrimitiveType::RegularPolygon:return m_RegPolygonVA;
+                case PrimitiveType::Ellipse:       return m_EllipseVA;
+                default:                           return m_VA; // Cube
+                }
+                }();
 
             if (obj.Tex) {
                 m_TexShader->Bind();
@@ -317,6 +330,21 @@ public:
         ImGui::Begin("Viewport");
         m_ViewportHovered = ImGui::IsWindowHovered();
 
+
+        // ---- Curseur dynamique (gizmo) ----------------------------------------
+        if (m_GizmoDragging)
+        {
+            if (m_ActiveAxis == GizmoAxis::X) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+            else if (m_ActiveAxis == GizmoAxis::Y) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            else if (m_ActiveAxis == GizmoAxis::Z) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        }
+        else if (m_HoveredAxis != GizmoAxis::None)
+        {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+        // else: curseur par defaut (Arrow) = 5e etat
+
+
         // Capturer la position du contenu du viewport (pour le hit-test gizmo)
         ImVec2 contentPos = ImGui::GetCursorScreenPos();
         m_ViewportPos = { contentPos.x, contentPos.y };
@@ -341,17 +369,41 @@ public:
             if (ImGui::Selectable(m_Objects[i].Name.c_str(), sel)) m_Selected = i;
         }
         ImGui::Separator();
-        if (ImGui::Button("+ Cube")) {
-            SceneObject obj;
-            obj.Name = "Cube " + std::to_string(m_Objects.size() + 1);
-            obj.Mat.Diffuse = { (float)rand() / RAND_MAX,(float)rand() / RAND_MAX,(float)rand() / RAND_MAX };
-            SaveSnapshot();
-            m_Objects.push_back(obj);
-            m_Selected = (int)m_Objects.size() - 1;
+        if (ImGui::Button("+ Add"))
+            ImGui::OpenPopup("AddPrimPopup");
+        if (ImGui::BeginPopup("AddPrimPopup"))
+        {
+            struct PrimEntry { const char* label; PrimitiveType type; };
+            PrimEntry entries[] = {
+                { "Cube",              PrimitiveType::Cube          },
+                { "Plan",              PrimitiveType::Plane         },
+                { "Triangle",          PrimitiveType::Triangle      },
+                { "Cercle",            PrimitiveType::Circle        },
+                { "Polygone regulier", PrimitiveType::RegularPolygon},
+                { "Ellipse",           PrimitiveType::Ellipse       },
+            };
+            for (auto& e : entries)
+            {
+                if (ImGui::MenuItem(e.label))
+                {
+                    SceneObject obj;
+                    int count = 0;
+                    for (auto& o : m_Objects) if (o.Type == e.type) count++;
+                    obj.Name = std::string(e.label) + " " + std::to_string(count + 1);
+                    obj.Type = e.type;
+                    obj.Mat.Diffuse = { (float)rand() / RAND_MAX,(float)rand() / RAND_MAX,(float)rand() / RAND_MAX };
+                    if (e.type == PrimitiveType::Plane) { obj.Scale = { 3,1,3 }; obj.Position = { 0,-0.5f,0 }; }
+                    SaveSnapshot();
+                    m_Objects.push_back(obj);
+                    m_Selected = (int)m_Objects.size() - 1;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::EndPopup();
         }
         if (m_Selected >= 0 && m_Selected < (int)m_Objects.size()) {
             ImGui::SameLine();
-            if (ImGui::Button("- Supprimer")) {
+            if (ImGui::Button("-  Supprimer")) {
                 SaveSnapshot();
                 m_Objects.erase(m_Objects.begin() + m_Selected);
                 m_Selected = glm::max(0, m_Selected - 1);
@@ -377,7 +429,7 @@ public:
         if (!canRedo) ImGui::EndDisabled();
 
 
-    
+
 
 
         // ---- Histogramme --------------------------------------------------
@@ -418,15 +470,15 @@ public:
                 dl->AddRectFilled({ x0, p.y + H - bH }, { x1, p.y + H }, IM_COL32(60, 60, 255, 120));
             }
 
-            // avance le curseur pour que ImGui sache que l'espace est utilisé
+            // avance le curseur pour que ImGui sache que l'espace est utilisï¿½
             ImGui::Dummy(ImVec2(W, H));
 
-            ImGui::TextDisabled("R  G  B  (superposés)");
+            ImGui::TextDisabled("R  G  B  (superposes)");
         }
 
         ImGui::End();
 
-    
+
 
 
         // ---- Lumieres -----------------------------------------------------
@@ -547,7 +599,7 @@ public:
 
     void ComputeHistogram()
     {
-        auto& spec = m_Framebuffer->GetSpec();  
+        auto& spec = m_Framebuffer->GetSpec();
         int w = (int)spec.Width, h = (int)spec.Height;
         if (w <= 0 || h <= 0) return;
 
@@ -720,6 +772,86 @@ private:
         m_ArrowVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(idx, 12));
     }
 
+    void BuildTriangleMesh() {
+        // Triangle equilateral plat sur XZ
+        float v[] = {
+             0.0f, 0.0f, -0.5f,   0,1,0,  0.5f,0.0f,
+            -0.5f, 0.0f,  0.433f, 0,1,0,  0.0f,1.0f,
+             0.5f, 0.0f,  0.433f, 0,1,0,  1.0f,1.0f,
+        };
+        uint32_t idx[] = { 0,1,2 };
+        m_TriangleVA = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(v, sizeof(v));
+        vb->SetLayout({ {Purr::ShaderDataType::Float3,"a_Position"},{Purr::ShaderDataType::Float3,"a_Normal"},{Purr::ShaderDataType::Float2,"a_TexCoord"} });
+        m_TriangleVA->AddVertexBuffer(vb);
+        m_TriangleVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(idx, 3));
+    }
+
+    void BuildCircleMesh(int segments = 32) {
+        std::vector<float> verts;
+        std::vector<uint32_t> indices;
+        // centre
+        verts.insert(verts.end(), { 0.0f,0.0f,0.0f, 0.0f,1.0f,0.0f, 0.5f,0.5f });
+        for (int i = 0; i < segments; i++) {
+            float a = i * 2.0f * glm::pi<float>() / segments;
+            float x = 0.5f * cos(a), z = 0.5f * sin(a);
+            verts.insert(verts.end(), { x,0.0f,z, 0.0f,1.0f,0.0f, x + 0.5f,z + 0.5f });
+        }
+        for (int i = 0; i < segments; i++) {
+            indices.push_back(0);
+            indices.push_back(i + 1);
+            indices.push_back((i + 1) % segments + 1);
+        }
+        m_CircleVA = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(verts.data(), (uint32_t)(verts.size() * sizeof(float)));
+        vb->SetLayout({ {Purr::ShaderDataType::Float3,"a_Position"},{Purr::ShaderDataType::Float3,"a_Normal"},{Purr::ShaderDataType::Float2,"a_TexCoord"} });
+        m_CircleVA->AddVertexBuffer(vb);
+        m_CircleVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(indices.data(), (uint32_t)indices.size()));
+    }
+
+    void BuildRegPolygonMesh(int sides = 6) {
+        std::vector<float> verts;
+        std::vector<uint32_t> indices;
+        verts.insert(verts.end(), { 0.0f,0.0f,0.0f, 0.0f,1.0f,0.0f, 0.5f,0.5f });
+        for (int i = 0; i < sides; i++) {
+            float a = i * 2.0f * glm::pi<float>() / sides;
+            float x = 0.5f * cos(a), z = 0.5f * sin(a);
+            verts.insert(verts.end(), { x,0.0f,z, 0.0f,1.0f,0.0f, x + 0.5f,z + 0.5f });
+        }
+        for (int i = 0; i < sides; i++) {
+            indices.push_back(0);
+            indices.push_back(i + 1);
+            indices.push_back((i + 1) % sides + 1);
+        }
+        m_RegPolygonVA = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(verts.data(), (uint32_t)(verts.size() * sizeof(float)));
+        vb->SetLayout({ {Purr::ShaderDataType::Float3,"a_Position"},{Purr::ShaderDataType::Float3,"a_Normal"},{Purr::ShaderDataType::Float2,"a_TexCoord"} });
+        m_RegPolygonVA->AddVertexBuffer(vb);
+        m_RegPolygonVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(indices.data(), (uint32_t)indices.size()));
+    }
+
+    void BuildEllipseMesh(int segments = 32) {
+        // Demi-axes: X=0.5, Z=0.25 (ratio 2:1)
+        std::vector<float> verts;
+        std::vector<uint32_t> indices;
+        verts.insert(verts.end(), { 0.0f,0.0f,0.0f, 0.0f,1.0f,0.0f, 0.5f,0.5f });
+        for (int i = 0; i < segments; i++) {
+            float a = i * 2.0f * glm::pi<float>() / segments;
+            float x = 0.5f * cos(a), z = 0.25f * sin(a);
+            verts.insert(verts.end(), { x,0.0f,z, 0.0f,1.0f,0.0f, x + 0.5f, z * 2.0f + 0.5f });
+        }
+        for (int i = 0; i < segments; i++) {
+            indices.push_back(0);
+            indices.push_back(i + 1);
+            indices.push_back((i + 1) % segments + 1);
+        }
+        m_EllipseVA = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(verts.data(), (uint32_t)(verts.size() * sizeof(float)));
+        vb->SetLayout({ {Purr::ShaderDataType::Float3,"a_Position"},{Purr::ShaderDataType::Float3,"a_Normal"},{Purr::ShaderDataType::Float2,"a_TexCoord"} });
+        m_EllipseVA->AddVertexBuffer(vb);
+        m_EllipseVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(indices.data(), (uint32_t)indices.size()));
+    }
+
     void BuildPlaneMesh() {
         float verts[] = {
             -0.5f,0,-0.5f, 0,1,0, 0,0,
@@ -866,6 +998,7 @@ private:
 
     // Renderer
     std::shared_ptr<Purr::VertexArray>  m_VA, m_PlaneVA, m_BBoxVA;
+    std::shared_ptr<Purr::VertexArray>  m_TriangleVA, m_CircleVA, m_RegPolygonVA, m_EllipseVA;
     std::shared_ptr<Purr::Shader>       m_Shader, m_TexShader, m_WireShader;
     std::shared_ptr<Purr::Texture>      m_CheckerTex;
     std::shared_ptr<Purr::Framebuffer>  m_Framebuffer;
