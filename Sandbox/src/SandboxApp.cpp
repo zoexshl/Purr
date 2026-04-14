@@ -158,6 +158,25 @@ public:
         m_RenamingIndex = -1;
     }
 
+    void EnterPlayMode()
+    {
+        m_SavedScene = m_Objects;           // snapshot
+        m_State = EngineState::Playing;
+        m_GizmoDragging = false;
+        m_ActiveAxis = GizmoAxis::None;
+        // future : appeler OnStart() sur tous les scripts ici
+    }
+
+    void StopPlayMode()
+    {
+        m_Objects = m_SavedScene;           // revert
+        m_State = EngineState::Editor;
+        m_Selection.clear();
+        m_Selected = m_Objects.empty() ? -1 : 0;
+        if (m_Selected >= 0) m_Selection.insert(m_Selected);
+    }
+
+
     void DeleteSelection()
     {
         if (m_Selection.empty()) return;
@@ -187,6 +206,9 @@ public:
         }
 
         ImGuiIO& io = ImGui::GetIO();
+        if (m_State == EngineState::Editor)
+        {
+
         // Undo / Redo -----  Ctrl+Z/ Ctrl+Y - Raccourcis Clavier
         if (!io.WantTextInput)
         {
@@ -364,6 +386,16 @@ public:
         }
         else if (!m_ViewportHovered && !m_GizmoDragging)
             m_HoveredAxis = GizmoAxis::None;
+
+
+        } // fin du mode Editor *_*
+
+        // Play / Stop : Space
+        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space))
+        {
+            if (m_State == EngineState::Editor) EnterPlayMode();
+            else                                StopPlayMode();
+        }
 
         // --- Render dans le framebuffer ---
         m_Framebuffer->Bind();
@@ -609,35 +641,66 @@ public:
         // Capturer la position du contenu du viewport (pour le hit-test gizmo)
         ImVec2 contentPos = ImGui::GetCursorScreenPos();
         m_ViewportPos = { contentPos.x, contentPos.y };
+        
 
-        // ---- Toolbar mode gizmo (overlay haut-gauche du viewport) ----------
+        ImGui::SetCursorScreenPos(contentPos);
+        ImVec2 size = ImGui::GetContentRegionAvail();
+        m_ViewportSize = { size.x, size.y };
+        uint64_t texID = m_Framebuffer->GetColorAttachmentID();
+        ImGui::Image((ImTextureID)texID, size, ImVec2(0, 1), ImVec2(1, 0));
+
+        // ---- Toolbar gizmo (haut-gauche) — masquée en Play mode ----
+        if (m_State == EngineState::Editor)
         {
             ImGui::SetCursorScreenPos(ImVec2(contentPos.x + 8, contentPos.y + 8));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
             ImGui::PushStyleColor(ImGuiCol_Button,
                 m_GizmoMode == GizmoMode::Translate ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
             if (ImGui::Button("  Translate [T]  ")) m_GizmoMode = GizmoMode::Translate;
-            ImGui::PopStyleColor();
-            ImGui::SameLine(0, 4);
+            ImGui::PopStyleColor(); ImGui::SameLine(0, 4);
             ImGui::PushStyleColor(ImGuiCol_Button,
                 m_GizmoMode == GizmoMode::Rotate ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
             if (ImGui::Button("  Rotation [R]  ")) m_GizmoMode = GizmoMode::Rotate;
-            ImGui::PopStyleColor();
-            ImGui::SameLine(0, 4);
+            ImGui::PopStyleColor(); ImGui::SameLine(0, 4);
             ImGui::PushStyleColor(ImGuiCol_Button,
                 m_GizmoMode == GizmoMode::Scale ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
             if (ImGui::Button("  Scale [S]  ")) m_GizmoMode = GizmoMode::Scale;
             ImGui::PopStyleColor();
             ImGui::PopStyleVar();
-            // Repositionner le curseur pour l'image
-            ImGui::SetCursorScreenPos(contentPos);
         }
 
-        ImVec2 size = ImGui::GetContentRegionAvail();
-        m_ViewportSize = { size.x, size.y };
-        uint64_t texID = m_Framebuffer->GetColorAttachmentID();
-        ImGui::Image((ImTextureID)texID, size, ImVec2(0, 1), ImVec2(1, 0));
+        // ---- Bouton Play / Stop (centre haut) ----
+        {
+            const char* btnLabel = (m_State == EngineState::Editor) ? "  >  Play  " : "  []  Stop  ";
+            ImVec4 btnColor = (m_State == EngineState::Editor)
+                ? ImVec4(0.2f, 0.75f, 0.3f, 0.92f)
+                : ImVec4(0.85f, 0.2f, 0.2f, 0.92f);
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
+
+            float btnW = 110.0f;
+            float cx = contentPos.x + m_ViewportSize.x * 0.5f - btnW * 0.5f;
+            ImGui::SetCursorScreenPos(ImVec2(cx, contentPos.y + 8));
+            if (ImGui::Button(btnLabel, ImVec2(btnW, 0))) {
+                if (m_State == EngineState::Editor) EnterPlayMode();
+                else                                StopPlayMode();
+            }
+
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+
+            if (m_State == EngineState::Playing) {
+                ImGui::SetCursorScreenPos(ImVec2(cx + btnW + 8, contentPos.y + 12));
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.4f, 0.9f), " * PLAYING  [Space] = stop");
+            }
+        }
+
         ImGui::End();
+
+
+
+
         ImGui::PopStyleVar();
 
         // ---- Scene --------------------------------------------------------
@@ -1778,6 +1841,11 @@ private:
 
     // Cache de mesh
     std::unordered_map<std::string, std::shared_ptr<Purr::VertexArray>> m_MeshCache;
+
+    // Play mode
+    enum class EngineState { Editor, Playing };
+    EngineState              m_State = EngineState::Editor;
+    std::vector<SceneObject> m_SavedScene;
 };
 
 // -----------------------------------------------------------------------
