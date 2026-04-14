@@ -149,6 +149,15 @@ public:
         }
     }
 
+    void CommitRename(int i)
+    {
+        if (strlen(m_RenameBuffer) > 0 && i >= 0 && i < (int)m_Objects.size()) {
+            SaveSnapshot();
+            m_Objects[i].Name = m_RenameBuffer;
+        }
+        m_RenamingIndex = -1;
+    }
+
     void DeleteSelection()
     {
         if (m_Selection.empty()) return;
@@ -641,23 +650,71 @@ public:
         ImGui::Text("Objets (%zu)", m_Objects.size());
 
         // ---- Scene list ----
-        for (int i = 0; i < (int)m_Objects.size(); i++) {
-            ImGui::PushID(i);
-            bool sel = IsSelected(i);
-            bool pushedColor = (sel && i != m_Selected);
-            if (pushedColor)
-                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.6f, 0.3f, 0.5f, 0.6f));
+        static const char* s_TypeIcons[] = { "[C]","[P]","[T]","[O]","[N]","[E]","[S]","[M]" };
 
-            if (ImGui::Selectable(m_Objects[i].Name.c_str(), sel, ImGuiSelectableFlags_AllowOverlap)) {
-                if (ImGui::GetIO().KeyCtrl) ToggleSelected(i);
-                else SetPrimarySelected(i);
+        for (int i = 0; i < (int)m_Objects.size(); i++)
+        {
+            ImGui::PushID(i);
+
+            if (m_RenamingIndex == i)
+            {
+                // --- Mode renommage ---
+                if (m_RenameFocusPending) {
+                    ImGui::SetKeyboardFocusHere(0);
+                    m_RenameFocusPending = false;
+                }
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::InputText("##ren", m_RenameBuffer, sizeof(m_RenameBuffer),
+                    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+                    CommitRename(i);
+                if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+                    m_RenamingIndex = -1;
+                // Clic ailleurs = confirme
+                if (!ImGui::IsItemActive() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                    CommitRename(i);
+            }
+            else
+            {
+                // --- Affichage normal ---
+                const char* icon = (int)m_Objects[i].Type < 8 ? s_TypeIcons[(int)m_Objects[i].Type] : "[?]";
+                std::string label = std::string(icon) + "  " + m_Objects[i].Name;
+
+                ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf
+                    | ImGuiTreeNodeFlags_NoTreePushOnOpen
+                    | ImGuiTreeNodeFlags_SpanAvailWidth;
+
+                bool sel = IsSelected(i);
+                bool isPivot = (sel && i == m_Selected);
+                if (sel)     flags |= ImGuiTreeNodeFlags_Selected;
+
+                // Couleur : pivot = rose vif, multi-sélection secondaire = rose pâle
+                if (isPivot)
+                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.85f, 0.3f, 0.6f, 0.85f));
+                else if (sel)
+                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.55f, 0.25f, 0.45f, 0.6f));
+
+                ImGui::TreeNodeEx(label.c_str(), flags);
+
+                if (isPivot || sel) ImGui::PopStyleColor();
+
+                // Clic simple = sélection
+                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                    if (ImGui::GetIO().KeyCtrl) ToggleSelected(i);
+                    else SetPrimarySelected(i);
+                }
+
+                // Double-clic = renommer
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    m_RenamingIndex = i;
+                    m_RenameFocusPending = true;
+                    strncpy_s(m_RenameBuffer, sizeof(m_RenameBuffer),
+                        m_Objects[i].Name.c_str(), _TRUNCATE);
+                }
             }
 
-            if (pushedColor) ImGui::PopStyleColor();
             ImGui::PopID();
         }
-        ImGui::TextDisabled("Ctrl+Click = multi-selection");
-
+        ImGui::TextDisabled("Ctrl+Click = multi  |  Double-clic = renommer");
 
         ImGui::Separator();
         if (ImGui::Button("+ Add"))
@@ -1671,6 +1728,12 @@ private:
     }
 
 private:
+    // Rename inline
+    int  m_RenamingIndex = -1;
+    char m_RenameBuffer[128] = {};
+    bool m_RenameFocusPending = false;
+
+
     // Scene
     std::vector<SceneObject>     m_Objects;
     int                          m_Selected = 0;          // pivot principal (gizmo)
