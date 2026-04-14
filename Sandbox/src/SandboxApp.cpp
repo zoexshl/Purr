@@ -5,6 +5,7 @@
 #include "Purr/Events/MouseEvent.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/constants.hpp>
 #include <Windows.h>
 #include <commdlg.h>
 #include "nlohmann/json.hpp"
@@ -68,9 +69,10 @@ struct SceneObject {
 };
 
 // -----------------------------------------------------------------------
-// Gizmo axis enum
+// Gizmo enums
 // -----------------------------------------------------------------------
 enum class GizmoAxis { None, X, Y, Z };
+enum class GizmoMode { Translate, Rotate };
 
 // -----------------------------------------------------------------------
 // ExampleLayer
@@ -83,7 +85,7 @@ public:
         BuildTriangleMesh(); BuildCircleMesh(); BuildRegPolygonMesh(); BuildEllipseMesh();
         BuildShader(); BuildTexturedShader();
         BuildWireShader(); BuildBBoxMesh();
-        BuildGizmoShader(); BuildArrowMesh();
+        BuildGizmoShader(); BuildArrowMesh(); BuildRingMesh();
 
         m_CheckerTex = std::make_shared<Purr::Texture>(128, 128, 0xFFB97FFF);
 
@@ -138,6 +140,8 @@ public:
         {
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) Undo();
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) Redo();
+            if (ImGui::IsKeyPressed(ImGuiKey_T)) m_GizmoMode = GizmoMode::Translate;
+            if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoMode = GizmoMode::Rotate;
         }
 
         // Orbite (clic droit, seulement si pas en train de dragger le gizmo)
@@ -153,32 +157,68 @@ public:
                               1.0f - mp.y / m_ViewportSize.y * 2.0f };
             m_ActiveAxis = HitTestGizmo(ndc);
             m_GizmoDragging = (m_ActiveAxis != GizmoAxis::None);
-            if (m_GizmoDragging) SaveSnapshot();
+            if (m_GizmoDragging)
+            {
+                SaveSnapshot();
+                if (m_GizmoMode == GizmoMode::Rotate)
+                {
+                    // Enregistre l'angle initial souris/centre pour la rotation
+                    glm::vec3& pos = m_Objects[m_Selected].Position;
+                    glm::vec4 clip = m_Camera.GetViewProjection() * glm::vec4(pos, 1.0f);
+                    glm::vec2 center2D = { clip.x / clip.w, clip.y / clip.w };
+                    m_RotDragLastAngle = atan2f(ndc.y - center2D.y, ndc.x - center2D.x);
+                }
+            }
         }
 
         if (m_GizmoDragging && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && m_Selected >= 0)
         {
             ImGuiIO& io = ImGui::GetIO();
-            glm::vec2 delta = { io.MouseDelta.x / m_ViewportSize.x * 2.0f,
-                               -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
 
-            glm::vec3& pos = m_Objects[m_Selected].Position;
-            glm::vec3 axisDir = (m_ActiveAxis == GizmoAxis::X) ? glm::vec3(1, 0, 0) :
-                (m_ActiveAxis == GizmoAxis::Y) ? glm::vec3(0, 1, 0) :
-                glm::vec3(0, 0, 1);
-
-            glm::mat4 vp = m_Camera.GetViewProjection();
-            auto proj2D = [&](glm::vec3 p) -> glm::vec2 {
-                glm::vec4 c = vp * glm::vec4(p, 1.0f);
-                return glm::vec2(c.x / c.w, c.y / c.w);
-                };
-
-            glm::vec2 screenAxis = proj2D(pos + axisDir) - proj2D(pos);
-            float screenLen = glm::length(screenAxis);
-            if (screenLen > 0.0001f)
+            if (m_GizmoMode == GizmoMode::Translate)
             {
-                float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
-                pos += axisDir * t;
+                glm::vec2 delta = { io.MouseDelta.x / m_ViewportSize.x * 2.0f,
+                                   -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
+
+                glm::vec3& pos = m_Objects[m_Selected].Position;
+                glm::vec3 axisDir = (m_ActiveAxis == GizmoAxis::X) ? glm::vec3(1, 0, 0) :
+                    (m_ActiveAxis == GizmoAxis::Y) ? glm::vec3(0, 1, 0) :
+                    glm::vec3(0, 0, 1);
+
+                glm::mat4 vp = m_Camera.GetViewProjection();
+                auto proj2D = [&](glm::vec3 p) -> glm::vec2 {
+                    glm::vec4 c = vp * glm::vec4(p, 1.0f);
+                    return glm::vec2(c.x / c.w, c.y / c.w);
+                    };
+
+                glm::vec2 screenAxis = proj2D(pos + axisDir) - proj2D(pos);
+                float screenLen = glm::length(screenAxis);
+                if (screenLen > 0.0001f)
+                {
+                    float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
+                    pos += axisDir * t;
+                }
+            }
+            else // Rotate
+            {
+                glm::vec3& pos = m_Objects[m_Selected].Position;
+                glm::vec4 clip = m_Camera.GetViewProjection() * glm::vec4(pos, 1.0f);
+                glm::vec2 center2D = { clip.x / clip.w, clip.y / clip.w };
+
+                glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
+                glm::vec2 mouseNDC = { mp.x / m_ViewportSize.x * 2.0f - 1.0f,
+                                       1.0f - mp.y / m_ViewportSize.y * 2.0f };
+                float currentAngle = atan2f(mouseNDC.y - center2D.y, mouseNDC.x - center2D.x);
+                float delta = currentAngle - m_RotDragLastAngle;
+                // Gestion wrap-around
+                if (delta > glm::pi<float>()) delta -= 2.0f * glm::pi<float>();
+                if (delta < -glm::pi<float>()) delta += 2.0f * glm::pi<float>();
+                m_RotDragLastAngle = currentAngle;
+
+                float degrees = glm::degrees(delta) * 2.0f;
+                if (m_ActiveAxis == GizmoAxis::X) m_Objects[m_Selected].Rotation.x += degrees;
+                else if (m_ActiveAxis == GizmoAxis::Y) m_Objects[m_Selected].Rotation.y += degrees;
+                else if (m_ActiveAxis == GizmoAxis::Z) m_Objects[m_Selected].Rotation.z += degrees;
             }
         }
 
@@ -295,35 +335,66 @@ public:
             auto& obj = m_Objects[m_Selected];
             float scale = m_Camera.GetRadius() * 0.12f;
 
-            // Rotations pour orienter la fleche +X vers Y et Z
-            glm::mat4 rotToY = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 0, 1));
-            glm::mat4 rotToZ = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0, 1, 0));
-
-            struct AxisDesc { glm::mat4 rot; glm::vec4 color; GizmoAxis axis; };
-            AxisDesc axes[3] = {
-                { glm::mat4(1.0f), { 1.0f, 0.15f, 0.15f, 1.0f }, GizmoAxis::X },
-                { rotToY,          { 0.15f, 1.0f, 0.15f, 1.0f }, GizmoAxis::Y },
-                { rotToZ,          { 0.15f, 0.15f, 1.0f, 1.0f }, GizmoAxis::Z },
-            };
-
             Purr::RenderCommand::SetDepthTest(false);
             m_GizmoShader->Bind();
             m_GizmoShader->SetMat4("u_VP", m_Camera.GetViewProjection());
 
-            for (auto& a : axes)
+            if (m_GizmoMode == GizmoMode::Translate)
             {
-                glm::mat4 model =
-                    glm::translate(glm::mat4(1.0f), obj.Position) *
-                    a.rot *
-                    glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+                // Fleches de translation (comportement original)
+                glm::mat4 rotToY = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 0, 1));
+                glm::mat4 rotToZ = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0, 1, 0));
 
-                m_GizmoShader->SetMat4("u_Model", model);
+                struct AxisDesc { glm::mat4 rot; glm::vec4 color; GizmoAxis axis; };
+                AxisDesc axes[3] = {
+                    { glm::mat4(1.0f), { 1.0f, 0.15f, 0.15f, 1.0f }, GizmoAxis::X },
+                    { rotToY,          { 0.15f, 1.0f, 0.15f, 1.0f }, GizmoAxis::Y },
+                    { rotToZ,          { 0.15f, 0.15f, 1.0f, 1.0f }, GizmoAxis::Z },
+                };
 
-                bool highlight = (m_HoveredAxis == a.axis) || (m_GizmoDragging && m_ActiveAxis == a.axis);
-                glm::vec4 col = highlight ? glm::vec4(1.0f, 1.0f, 1.0f, 1.0f) : a.color;
-                m_GizmoShader->SetFloat4("u_Color", col);
+                for (auto& a : axes)
+                {
+                    glm::mat4 model =
+                        glm::translate(glm::mat4(1.0f), obj.Position) *
+                        a.rot *
+                        glm::scale(glm::mat4(1.0f), glm::vec3(scale));
 
-                Purr::RenderCommand::DrawLines(m_ArrowVA);
+                    m_GizmoShader->SetMat4("u_Model", model);
+                    bool highlight = (m_HoveredAxis == a.axis) || (m_GizmoDragging && m_ActiveAxis == a.axis);
+                    glm::vec4 col = highlight ? glm::vec4(1.0f, 1.0f, 0.2f, 1.0f) : a.color;
+                    m_GizmoShader->SetFloat4("u_Color", col);
+                    Purr::RenderCommand::DrawLines(m_ArrowVA);
+                }
+            }
+            else // Rotation rings
+            {
+                // X ring: cercle dans le plan YZ  -> rot 90° autour de Y
+                // Y ring: cercle dans le plan XZ  -> rot 90° autour de X
+                // Z ring: cercle dans le plan XY  -> identite
+                glm::mat4 rotX = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 1, 0));
+                glm::mat4 rotY = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1, 0, 0));
+                glm::mat4 rotZ = glm::mat4(1.0f);
+
+                struct RingDesc { glm::mat4 rot; glm::vec4 color; GizmoAxis axis; };
+                RingDesc rings[3] = {
+                    { rotX, { 1.0f, 0.15f, 0.15f, 1.0f }, GizmoAxis::X },
+                    { rotY, { 0.15f, 1.0f, 0.15f, 1.0f }, GizmoAxis::Y },
+                    { rotZ, { 0.15f, 0.15f, 1.0f, 1.0f }, GizmoAxis::Z },
+                };
+
+                for (auto& r : rings)
+                {
+                    glm::mat4 model =
+                        glm::translate(glm::mat4(1.0f), obj.Position) *
+                        r.rot *
+                        glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+
+                    m_GizmoShader->SetMat4("u_Model", model);
+                    bool highlight = (m_HoveredAxis == r.axis) || (m_GizmoDragging && m_ActiveAxis == r.axis);
+                    glm::vec4 col = highlight ? glm::vec4(1.0f, 1.0f, 0.2f, 1.0f) : r.color;
+                    m_GizmoShader->SetFloat4("u_Color", col);
+                    Purr::RenderCommand::DrawLines(m_RingVA);
+                }
             }
 
             Purr::RenderCommand::SetDepthTest(true);
@@ -345,20 +416,42 @@ public:
         // ---- Curseur dynamique (gizmo) ----------------------------------------
         if (m_GizmoDragging)
         {
-            if (m_ActiveAxis == GizmoAxis::X) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-            else if (m_ActiveAxis == GizmoAxis::Y) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-            else if (m_ActiveAxis == GizmoAxis::Z) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            if (m_GizmoMode == GizmoMode::Rotate)
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            else
+            {
+                if (m_ActiveAxis == GizmoAxis::X) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                else if (m_ActiveAxis == GizmoAxis::Y) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                else if (m_ActiveAxis == GizmoAxis::Z) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            }
         }
         else if (m_HoveredAxis != GizmoAxis::None)
         {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         }
-        // else: curseur par defaut (Arrow) = 5e etat
 
 
         // Capturer la position du contenu du viewport (pour le hit-test gizmo)
         ImVec2 contentPos = ImGui::GetCursorScreenPos();
         m_ViewportPos = { contentPos.x, contentPos.y };
+
+        // ---- Toolbar mode gizmo (overlay haut-gauche du viewport) ----------
+        {
+            ImGui::SetCursorScreenPos(ImVec2(contentPos.x + 8, contentPos.y + 8));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                m_GizmoMode == GizmoMode::Translate ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
+            if (ImGui::Button("  Translate [T]  ")) m_GizmoMode = GizmoMode::Translate;
+            ImGui::PopStyleColor();
+            ImGui::SameLine(0, 4);
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                m_GizmoMode == GizmoMode::Rotate ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
+            if (ImGui::Button("  Rotation [R]  ")) m_GizmoMode = GizmoMode::Rotate;
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+            // Repositionner le curseur pour l'image
+            ImGui::SetCursorScreenPos(contentPos);
+        }
 
         ImVec2 size = ImGui::GetContentRegionAvail();
         m_ViewportSize = { size.x, size.y };
@@ -375,10 +468,16 @@ public:
         if (ImGui::RadioButton("Orthographic", !isPersp)) m_Camera.SetProjectionMode(Purr::ProjectionMode::Orthographic);
         ImGui::Separator();
         ImGui::Text("Objets (%zu)", m_Objects.size());
+
+        // ---- Scene list ----
         for (int i = 0; i < (int)m_Objects.size(); i++) {
+            ImGui::PushID(i);
             bool sel = (m_Selected == i);
             if (ImGui::Selectable(m_Objects[i].Name.c_str(), sel)) m_Selected = i;
+            ImGui::PopID();
         }
+
+
         ImGui::Separator();
         if (ImGui::Button("+ Add"))
             ImGui::OpenPopup("AddPrimPopup");
@@ -454,26 +553,36 @@ public:
         //ImGui::SameLine();
         ImGui::Separator();
 
+        // ---- Importer OBJ  ----
         if (ImGui::Button("Importer OBJ")) {
             std::string p = OpenFileDialog("Modeles OBJ\0*.obj\0All Files\0*.*\0");
             if (!p.empty()) {
                 SceneObject obj;
-                obj.Name = "Modele OBJ";
+
+                // Extraire le nom du fichier sans extension
+                std::string filename = p.substr(p.find_last_of("/\\") + 1);
+                std::string stem = filename.substr(0, filename.find_last_of('.'));
+                // Compter les objets avec le même nom de base pour éviter les doublons
+                int count = 0;
+                for (auto& o : m_Objects)
+                    if (o.Name.rfind(stem, 0) == 0) count++;
+                obj.Name = count == 0 ? stem : stem + " " + std::to_string(count + 1);
+
                 obj.Type = PrimitiveType::Custom;
                 obj.MeshPath = p;
 
-                // Auto-charge la texture MTL
                 std::string texPath;
-                Purr::LoadOBJ(p, texPath);  // charge dans le cache + récupère tex
+                Purr::LoadOBJ(p, texPath);
                 if (!texPath.empty()) {
                     obj.TexPath = texPath;
                     obj.Tex = std::make_shared<Purr::Texture>(texPath);
                 }
 
+                SaveSnapshot();
                 m_Objects.push_back(obj);
+                m_Selected = (int)m_Objects.size() - 1;
             }
         }
-
 
 
         // ---- Histogramme --------------------------------------------------
@@ -769,9 +878,20 @@ private:
 
 
     // -----------------------------------------------------------------------
-    // Hit-test : retourne l'axe du gizmo le plus proche du curseur (NDC)
+    // Hit-test : dispatche selon le mode courant
     // -----------------------------------------------------------------------
     GizmoAxis HitTestGizmo(glm::vec2 mouseNDC)
+    {
+        if (m_GizmoMode == GizmoMode::Translate)
+            return HitTestTranslateGizmo(mouseNDC);
+        else
+            return HitTestRotateGizmo(mouseNDC);
+    }
+
+    // -----------------------------------------------------------------------
+    // Hit-test fleches de translation
+    // -----------------------------------------------------------------------
+    GizmoAxis HitTestTranslateGizmo(glm::vec2 mouseNDC)
     {
         if (m_Selected < 0 || m_Selected >= (int)m_Objects.size())
             return GizmoAxis::None;
@@ -794,20 +914,72 @@ private:
             { {0,0,1}, GizmoAxis::Z },
         };
 
-        const float kThreshold = 0.05f; // NDC units (~2-3% of screen width)
+        const float kThreshold = 0.05f;
         float bestDist = kThreshold;
         GizmoAxis result = GizmoAxis::None;
 
         for (auto& a : axes)
         {
             glm::vec2 tip = proj2D(pos + a.dir * scale);
-            // Distance point -> segment [base, tip]
             glm::vec2 ab = tip - base;
             glm::vec2 ap = mouseNDC - base;
             float denom = glm::max(glm::dot(ab, ab), 0.0001f);
             float t = glm::clamp(glm::dot(ap, ab) / denom, 0.0f, 1.0f);
             float d = glm::length(ap - t * ab);
             if (d < bestDist) { bestDist = d; result = a.axis; }
+        }
+        return result;
+    }
+
+    // -----------------------------------------------------------------------
+    // Hit-test anneaux de rotation
+    // -----------------------------------------------------------------------
+    GizmoAxis HitTestRotateGizmo(glm::vec2 mouseNDC)
+    {
+        if (m_Selected < 0 || m_Selected >= (int)m_Objects.size())
+            return GizmoAxis::None;
+
+        glm::vec3 pos = m_Objects[m_Selected].Position;
+        float scale = m_Camera.GetRadius() * 0.12f;
+        glm::mat4 vp = m_Camera.GetViewProjection();
+
+        auto proj2D = [&](glm::vec3 p) -> glm::vec2 {
+            glm::vec4 c = vp * glm::vec4(p, 1.0f);
+            return { c.x / c.w, c.y / c.w };
+            };
+
+        // Les vecteurs u/v de chaque anneau (coherents avec les matrices de rendu)
+        // X ring (rot 90° Y): points = (0, sin(a), -cos(a))  -> u=(0,0,-1) v=(0,1,0)
+        // Y ring (rot 90° X): points = (cos(a), 0, sin(a))   -> u=(1,0,0)  v=(0,0,1)
+        // Z ring (identite):  points = (cos(a), sin(a), 0)   -> u=(1,0,0)  v=(0,1,0)
+        struct RingInfo { glm::vec3 u, v; GizmoAxis axis; };
+        RingInfo rings[3] = {
+            { {0,0,-1}, {0,1,0}, GizmoAxis::X },
+            { {1,0,0},  {0,0,1}, GizmoAxis::Y },
+            { {1,0,0},  {0,1,0}, GizmoAxis::Z },
+        };
+
+        const int N = 32;
+        const float kThreshold = 0.04f;
+        float bestDist = kThreshold;
+        GizmoAxis result = GizmoAxis::None;
+
+        for (auto& ring : rings)
+        {
+            for (int i = 0; i < N; i++)
+            {
+                float a0 = 2.0f * glm::pi<float>() * i / N;
+                float a1 = 2.0f * glm::pi<float>() * (i + 1) / N;
+                glm::vec3 p0 = pos + scale * (cosf(a0) * ring.u + sinf(a0) * ring.v);
+                glm::vec3 p1 = pos + scale * (cosf(a1) * ring.u + sinf(a1) * ring.v);
+                glm::vec2 s0 = proj2D(p0), s1 = proj2D(p1);
+
+                glm::vec2 ab = s1 - s0, ap = mouseNDC - s0;
+                float denom = glm::max(glm::dot(ab, ab), 0.0001f);
+                float t = glm::clamp(glm::dot(ap, ab) / denom, 0.0f, 1.0f);
+                float d = glm::length(ap - t * ab);
+                if (d < bestDist) { bestDist = d; result = ring.axis; }
+            }
         }
         return result;
     }
@@ -1011,6 +1183,30 @@ private:
         m_PlaneVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(idx, 6));
     }
 
+    // Anneau unite dans le plan XY (z=0), rayon 1, 64 segments.
+    // On l'oriente avec une matrice de rotation pour X/Y/Z.
+    void BuildRingMesh()
+    {
+        const int N = 64;
+        float v[N * 3];
+        for (int i = 0; i < N; i++) {
+            float a = 2.0f * glm::pi<float>() * i / N;
+            v[i * 3 + 0] = cosf(a);
+            v[i * 3 + 1] = sinf(a);
+            v[i * 3 + 2] = 0.0f;
+        }
+        uint32_t idx[N * 2];
+        for (int i = 0; i < N; i++) {
+            idx[i * 2 + 0] = i;
+            idx[i * 2 + 1] = (i + 1) % N;
+        }
+        m_RingVA = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(v, sizeof(v));
+        vb->SetLayout({ {Purr::ShaderDataType::Float3, "a_Position"} });
+        m_RingVA->AddVertexBuffer(vb);
+        m_RingVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(idx, N * 2));
+    }
+
     void BuildCubeMesh() {
         float v[] = {
             -0.5f,-0.5f,-0.5f,0,0,-1,0,0,  0.5f,-0.5f,-0.5f,0,0,-1,1,0,  0.5f,0.5f,-0.5f,0,0,-1,1,1, -0.5f,0.5f,-0.5f,0,0,-1,0,1,
@@ -1150,10 +1346,13 @@ private:
 
     // Gizmo
     std::shared_ptr<Purr::VertexArray>  m_ArrowVA;
+    std::shared_ptr<Purr::VertexArray>  m_RingVA;
     std::shared_ptr<Purr::Shader>       m_GizmoShader;
+    GizmoMode m_GizmoMode = GizmoMode::Translate;
     GizmoAxis m_ActiveAxis = GizmoAxis::None;
     GizmoAxis m_HoveredAxis = GizmoAxis::None;
     bool      m_GizmoDragging = false;
+    float     m_RotDragLastAngle = 0.0f;
 
     // Viewport
     glm::vec2 m_ViewportSize = { 1280, 720 };
