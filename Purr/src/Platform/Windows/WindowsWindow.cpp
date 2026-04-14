@@ -8,6 +8,9 @@
 
 #include <glad/glad.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 
 namespace Purr {
 
@@ -53,6 +56,21 @@ namespace Purr {
 		}
 
 		m_Window = glfwCreateWindow((int)props.Width, (int)props.Height, m_Data.Title.c_str(), nullptr, nullptr);
+		// icon
+		{
+			int w, h, channels;
+			// chemin relatif depuis ton .exe (working directory)
+			unsigned char* pixels = stbi_load("assets/icon.png", &w, &h, &channels, 4);
+			if (pixels)
+			{
+				GLFWimage icon;
+				icon.width = w;
+				icon.height = h;
+				icon.pixels = pixels;
+				glfwSetWindowIcon(m_Window, 1, &icon);
+				stbi_image_free(pixels);
+			}
+		}
 		glfwMakeContextCurrent(m_Window);
 		// glad
 		int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
