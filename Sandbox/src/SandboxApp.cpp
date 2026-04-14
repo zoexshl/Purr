@@ -71,8 +71,8 @@ struct SceneObject {
 // -----------------------------------------------------------------------
 // Gizmo enums
 // -----------------------------------------------------------------------
-enum class GizmoAxis { None, X, Y, Z };
-enum class GizmoMode { Translate, Rotate };
+enum class GizmoAxis { None, X, Y, Z, All };
+enum class GizmoMode { Translate, Rotate, Scale };
 
 // -----------------------------------------------------------------------
 // ExampleLayer
@@ -85,7 +85,7 @@ public:
         BuildTriangleMesh(); BuildCircleMesh(); BuildRegPolygonMesh(); BuildEllipseMesh();
         BuildShader(); BuildTexturedShader();
         BuildWireShader(); BuildBBoxMesh();
-        BuildGizmoShader(); BuildArrowMesh(); BuildRingMesh();
+        BuildGizmoShader(); BuildArrowMesh(); BuildRingMesh(); BuildScaleHandleMesh();
 
         m_CheckerTex = std::make_shared<Purr::Texture>(128, 128, 0xFFB97FFF);
 
@@ -142,6 +142,7 @@ public:
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) Redo();
             if (ImGui::IsKeyPressed(ImGuiKey_T)) m_GizmoMode = GizmoMode::Translate;
             if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoMode = GizmoMode::Rotate;
+            if (ImGui::IsKeyPressed(ImGuiKey_S)) m_GizmoMode = GizmoMode::Scale;
         }
 
         // Orbite (clic droit, seulement si pas en train de dragger le gizmo)
@@ -199,7 +200,7 @@ public:
                     pos += axisDir * t;
                 }
             }
-            else // Rotate
+            else if (m_GizmoMode == GizmoMode::Rotate)
             {
                 glm::vec3& pos = m_Objects[m_Selected].Position;
                 glm::vec4 clip = m_Camera.GetViewProjection() * glm::vec4(pos, 1.0f);
@@ -219,6 +220,44 @@ public:
                 if (m_ActiveAxis == GizmoAxis::X) m_Objects[m_Selected].Rotation.x += degrees;
                 else if (m_ActiveAxis == GizmoAxis::Y) m_Objects[m_Selected].Rotation.y += degrees;
                 else if (m_ActiveAxis == GizmoAxis::Z) m_Objects[m_Selected].Rotation.z += degrees;
+            }
+            else // Scale
+            {
+                glm::vec2 delta = { io.MouseDelta.x / m_ViewportSize.x * 2.0f,
+                                   -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
+
+                glm::vec3& scl = m_Objects[m_Selected].Scale;
+                glm::vec3& pos = m_Objects[m_Selected].Position;
+
+                if (m_ActiveAxis == GizmoAxis::All)
+                {
+                    // Uniform scale: mouvement horizontal total
+                    float t = delta.x * 3.0f;
+                    float factor = 1.0f + t;
+                    scl = glm::max(scl * factor, glm::vec3(0.001f));
+                }
+                else
+                {
+                    glm::vec3 axisDir = (m_ActiveAxis == GizmoAxis::X) ? glm::vec3(1, 0, 0) :
+                        (m_ActiveAxis == GizmoAxis::Y) ? glm::vec3(0, 1, 0) :
+                        glm::vec3(0, 0, 1);
+
+                    glm::mat4 vp = m_Camera.GetViewProjection();
+                    auto proj2D = [&](glm::vec3 p) -> glm::vec2 {
+                        glm::vec4 c = vp * glm::vec4(p, 1.0f);
+                        return glm::vec2(c.x / c.w, c.y / c.w);
+                        };
+
+                    glm::vec2 screenAxis = proj2D(pos + axisDir) - proj2D(pos);
+                    float screenLen = glm::length(screenAxis);
+                    if (screenLen > 0.0001f)
+                    {
+                        float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
+                        if (m_ActiveAxis == GizmoAxis::X) scl.x = glm::max(scl.x + t * 2.0f, 0.001f);
+                        else if (m_ActiveAxis == GizmoAxis::Y) scl.y = glm::max(scl.y + t * 2.0f, 0.001f);
+                        else if (m_ActiveAxis == GizmoAxis::Z) scl.z = glm::max(scl.z + t * 2.0f, 0.001f);
+                    }
+                }
             }
         }
 
@@ -366,7 +405,7 @@ public:
                     Purr::RenderCommand::DrawLines(m_ArrowVA);
                 }
             }
-            else // Rotation rings
+            else if (m_GizmoMode == GizmoMode::Rotate)
             {
                 // X ring: cercle dans le plan YZ  -> rot 90° autour de Y
                 // Y ring: cercle dans le plan XZ  -> rot 90° autour de X
@@ -396,6 +435,47 @@ public:
                     Purr::RenderCommand::DrawLines(m_RingVA);
                 }
             }
+            else // Scale
+            {
+                // Handles axes X/Y/Z : shaft + petit cube au bout
+                glm::mat4 rotToY = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0, 0, 1));
+                glm::mat4 rotToZ = glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(0, 1, 0));
+
+                struct AxisDesc { glm::mat4 rot; glm::vec4 color; GizmoAxis axis; };
+                AxisDesc axes[3] = {
+                    { glm::mat4(1.0f), { 1.0f, 0.15f, 0.15f, 1.0f }, GizmoAxis::X },
+                    { rotToY,          { 0.15f, 1.0f, 0.15f, 1.0f }, GizmoAxis::Y },
+                    { rotToZ,          { 0.15f, 0.15f, 1.0f, 1.0f }, GizmoAxis::Z },
+                };
+
+                for (auto& a : axes)
+                {
+                    glm::mat4 model =
+                        glm::translate(glm::mat4(1.0f), obj.Position) *
+                        a.rot *
+                        glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+
+                    m_GizmoShader->SetMat4("u_Model", model);
+                    bool highlight = (m_HoveredAxis == a.axis) || (m_GizmoDragging && m_ActiveAxis == a.axis);
+                    glm::vec4 col = highlight ? glm::vec4(1.0f, 1.0f, 0.2f, 1.0f) : a.color;
+                    m_GizmoShader->SetFloat4("u_Color", col);
+                    Purr::RenderCommand::DrawLines(m_ScaleHandleVA);
+                }
+
+                // Cube central pour scale uniforme
+                {
+                    float cs = scale * 0.18f;
+                    glm::mat4 model =
+                        glm::translate(glm::mat4(1.0f), obj.Position) *
+                        glm::scale(glm::mat4(1.0f), glm::vec3(cs));
+
+                    m_GizmoShader->SetMat4("u_Model", model);
+                    bool highlight = (m_HoveredAxis == GizmoAxis::All) || (m_GizmoDragging && m_ActiveAxis == GizmoAxis::All);
+                    glm::vec4 col = highlight ? glm::vec4(1.0f, 1.0f, 0.2f, 1.0f) : glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+                    m_GizmoShader->SetFloat4("u_Color", col);
+                    Purr::RenderCommand::DrawLines(m_BBoxVA);
+                }
+            }
 
             Purr::RenderCommand::SetDepthTest(true);
         }
@@ -418,6 +498,13 @@ public:
         {
             if (m_GizmoMode == GizmoMode::Rotate)
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            else if (m_GizmoMode == GizmoMode::Scale)
+            {
+                if (m_ActiveAxis == GizmoAxis::All) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                else if (m_ActiveAxis == GizmoAxis::X) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                else if (m_ActiveAxis == GizmoAxis::Y) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                else ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+            }
             else
             {
                 if (m_ActiveAxis == GizmoAxis::X) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
@@ -447,6 +534,11 @@ public:
             ImGui::PushStyleColor(ImGuiCol_Button,
                 m_GizmoMode == GizmoMode::Rotate ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
             if (ImGui::Button("  Rotation [R]  ")) m_GizmoMode = GizmoMode::Rotate;
+            ImGui::PopStyleColor();
+            ImGui::SameLine(0, 4);
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                m_GizmoMode == GizmoMode::Scale ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
+            if (ImGui::Button("  Scale [S]  ")) m_GizmoMode = GizmoMode::Scale;
             ImGui::PopStyleColor();
             ImGui::PopStyleVar();
             // Repositionner le curseur pour l'image
@@ -884,8 +976,10 @@ private:
     {
         if (m_GizmoMode == GizmoMode::Translate)
             return HitTestTranslateGizmo(mouseNDC);
-        else
+        else if (m_GizmoMode == GizmoMode::Rotate)
             return HitTestRotateGizmo(mouseNDC);
+        else
+            return HitTestScaleGizmo(mouseNDC);
     }
 
     // -----------------------------------------------------------------------
@@ -985,6 +1079,56 @@ private:
     }
 
     // -----------------------------------------------------------------------
+    // Hit-test handles de scale
+    // -----------------------------------------------------------------------
+    GizmoAxis HitTestScaleGizmo(glm::vec2 mouseNDC)
+    {
+        if (m_Selected < 0 || m_Selected >= (int)m_Objects.size())
+            return GizmoAxis::None;
+
+        glm::vec3 pos = m_Objects[m_Selected].Position;
+        float scale = m_Camera.GetRadius() * 0.12f;
+        glm::mat4 vp = m_Camera.GetViewProjection();
+
+        auto proj2D = [&](glm::vec3 p) -> glm::vec2 {
+            glm::vec4 c = vp * glm::vec4(p, 1.0f);
+            return glm::vec2(c.x / c.w, c.y / c.w);
+            };
+
+        // Test cube central (scale uniforme) en priorite
+        {
+            glm::vec2 center = proj2D(pos);
+            float d = glm::length(mouseNDC - center);
+            if (d < 0.04f) return GizmoAxis::All;
+        }
+
+        // Test shafts X/Y/Z (meme logique que translate)
+        glm::vec2 base = proj2D(pos);
+        struct AxisInfo { glm::vec3 dir; GizmoAxis axis; };
+        AxisInfo axes[3] = {
+            { {1,0,0}, GizmoAxis::X },
+            { {0,1,0}, GizmoAxis::Y },
+            { {0,0,1}, GizmoAxis::Z },
+        };
+
+        const float kThreshold = 0.05f;
+        float bestDist = kThreshold;
+        GizmoAxis result = GizmoAxis::None;
+
+        for (auto& a : axes)
+        {
+            glm::vec2 tip = proj2D(pos + a.dir * scale);
+            glm::vec2 ab = tip - base;
+            glm::vec2 ap = mouseNDC - base;
+            float denom = glm::max(glm::dot(ab, ab), 0.0001f);
+            float t = glm::clamp(glm::dot(ap, ab) / denom, 0.0f, 1.0f);
+            float d = glm::length(ap - t * ab);
+            if (d < bestDist) { bestDist = d; result = a.axis; }
+        }
+        return result;
+    }
+
+    // -----------------------------------------------------------------------
     // Mesh & shader builders
     // -----------------------------------------------------------------------
     void SetupDockspace()
@@ -1049,6 +1193,39 @@ private:
             out vec4 color;
             void main() { color = u_Color; })"
         );
+    }
+
+    // Shaft le long de +X (0→0.82) + petit cube wireframe centré à 0.92 (de 0.82 à 1.02)
+    void BuildScaleHandleMesh()
+    {
+        // v0 : origine
+        // v1 : debut cube  (0.82, 0, 0)
+        // v2-v9 : 8 coins du cube
+        //   front face (Z=-0.1): v2(0.82,-0.1,-0.1) v3(1.02,-0.1,-0.1) v4(1.02,0.1,-0.1) v5(0.82,0.1,-0.1)
+        //   back  face (Z=+0.1): v6(0.82,-0.1, 0.1) v7(1.02,-0.1, 0.1) v8(1.02,0.1, 0.1) v9(0.82,0.1, 0.1)
+        float v[] = {
+            0.00f,  0.00f,  0.00f,  // 0 origine
+            0.82f,  0.00f,  0.00f,  // 1 base cube
+            0.82f, -0.10f, -0.10f,  // 2
+            1.02f, -0.10f, -0.10f,  // 3
+            1.02f,  0.10f, -0.10f,  // 4
+            0.82f,  0.10f, -0.10f,  // 5
+            0.82f, -0.10f,  0.10f,  // 6
+            1.02f, -0.10f,  0.10f,  // 7
+            1.02f,  0.10f,  0.10f,  // 8
+            0.82f,  0.10f,  0.10f,  // 9
+        };
+        uint32_t idx[] = {
+            0,1,            // shaft
+            2,3, 3,4, 4,5, 5,2,  // face avant
+            6,7, 7,8, 8,9, 9,6,  // face arriere
+            2,6, 3,7, 4,8, 5,9,  // aretes laterales
+        };
+        m_ScaleHandleVA = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(v, sizeof(v));
+        vb->SetLayout({ { Purr::ShaderDataType::Float3, "a_Position" } });
+        m_ScaleHandleVA->AddVertexBuffer(vb);
+        m_ScaleHandleVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(idx, 26));
     }
 
     // Fleche orientee le long de +X, de 0 a 1.
@@ -1347,6 +1524,7 @@ private:
     // Gizmo
     std::shared_ptr<Purr::VertexArray>  m_ArrowVA;
     std::shared_ptr<Purr::VertexArray>  m_RingVA;
+    std::shared_ptr<Purr::VertexArray>  m_ScaleHandleVA;
     std::shared_ptr<Purr::Shader>       m_GizmoShader;
     GizmoMode m_GizmoMode = GizmoMode::Translate;
     GizmoAxis m_ActiveAxis = GizmoAxis::None;
