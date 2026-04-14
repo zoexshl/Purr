@@ -35,8 +35,8 @@ static std::string OpenFileDialog(const char* filter = "All Files\0*.*\0")
 enum class IlluminationModel { Lambert = 0, Phong, BlinnPhong };
 static const char* s_ModelNames[] = { "Lambert", "Phong", "Blinn-Phong" };
 
-enum class PrimitiveType { Cube = 0, Plane, Triangle, Circle, RegularPolygon, Ellipse, Custom };
-static const char* s_PrimNames[] = { "Cube", "Plan", "Triangle", "Cercle", "Polygone regulier", "Ellipse", "Modele OBJ" };
+enum class PrimitiveType { Cube = 0, Plane, Triangle, Circle, RegularPolygon, Ellipse, Sphere, Custom };
+static const char* s_PrimNames[] = { "Cube", "Plan", "Triangle", "Cercle", "Polygone regulier", "Ellipse", "Sphere", "Modele OBJ" };
 
 struct Light {
     glm::vec3 Position = { 0.0f, 3.0f, 0.0f };
@@ -84,7 +84,7 @@ public:
     ExampleLayer() : Layer("Example"), m_Camera(60.0f, 1280.0f / 720.0f)
     {
         BuildCubeMesh(); BuildPlaneMesh();
-        BuildTriangleMesh(); BuildCircleMesh(); BuildRegPolygonMesh(); BuildEllipseMesh();
+        BuildTriangleMesh(); BuildCircleMesh(); BuildRegPolygonMesh(); BuildEllipseMesh(); BuildSphereMesh();
         BuildShader(); BuildTexturedShader();
         BuildWireShader(); BuildBBoxMesh();
         BuildGizmoShader(); BuildArrowMesh(); BuildRingMesh(); BuildScaleHandleMesh();
@@ -644,16 +644,16 @@ public:
         for (int i = 0; i < (int)m_Objects.size(); i++) {
             ImGui::PushID(i);
             bool sel = IsSelected(i);
-            bool pushedColor = (sel && i != m_Selected);  
+            bool pushedColor = (sel && i != m_Selected);
             if (pushedColor)
                 ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.6f, 0.3f, 0.5f, 0.6f));
 
             if (ImGui::Selectable(m_Objects[i].Name.c_str(), sel, ImGuiSelectableFlags_AllowOverlap)) {
                 if (ImGui::GetIO().KeyCtrl) ToggleSelected(i);
-                else SetPrimarySelected(i);  
+                else SetPrimarySelected(i);
             }
 
-            if (pushedColor) ImGui::PopStyleColor(); 
+            if (pushedColor) ImGui::PopStyleColor();
             ImGui::PopID();
         }
         ImGui::TextDisabled("Ctrl+Click = multi-selection");
@@ -672,6 +672,7 @@ public:
                 { "Cercle",            PrimitiveType::Circle        },
                 { "Polygone regulier", PrimitiveType::RegularPolygon},
                 { "Ellipse",           PrimitiveType::Ellipse       },
+                { "Sphere",            PrimitiveType::Sphere        },
             };
             for (auto& e : entries)
             {
@@ -888,10 +889,10 @@ public:
             ImGui::Text("Modele d'illumination");
             int model = (int)obj.Mat.Model;
             if (ImGui::Combo("##illum", &model, s_ModelNames, 3)) obj.Mat.Model = (IlluminationModel)model;
-           
-            
-            
-            
+
+
+
+
             // ---- Multi-sélection ----
             if (m_Selection.size() > 1)
             {
@@ -925,9 +926,9 @@ public:
                 if (ImGui::Button("Supprimer selection"))
                     DeleteSelection();
             }
-            
-            
-            
+
+
+
             ImGui::End();
         }
     }
@@ -1091,6 +1092,7 @@ private:
         case PrimitiveType::Circle:        return m_CircleVA;
         case PrimitiveType::RegularPolygon:return m_RegPolygonVA;
         case PrimitiveType::Ellipse:       return m_EllipseVA;
+        case PrimitiveType::Sphere:        return m_SphereVA;
         default:                           return m_VA; // Cube
         }
     }
@@ -1473,6 +1475,40 @@ private:
         m_EllipseVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(indices.data(), (uint32_t)indices.size()));
     }
 
+    void BuildSphereMesh(int stacks = 16, int sectors = 32) {
+        std::vector<float> verts;
+        std::vector<uint32_t> indices;
+        float r = 0.5f;
+        for (int i = 0; i <= stacks; i++) {
+            float phi = glm::pi<float>() * i / stacks;
+            float y = r * cosf(phi);
+            float sinPhi = sinf(phi);
+            for (int j = 0; j <= sectors; j++) {
+                float theta = 2.0f * glm::pi<float>() * j / sectors;
+                float x = r * sinPhi * cosf(theta);
+                float z = r * sinPhi * sinf(theta);
+                float nx = sinPhi * cosf(theta);
+                float ny = cosf(phi);
+                float nz = sinPhi * sinf(theta);
+                float u = (float)j / sectors;
+                float v = (float)i / stacks;
+                verts.insert(verts.end(), { x, y, z, nx, ny, nz, u, v });
+            }
+        }
+        for (int i = 0; i < stacks; i++) {
+            for (int j = 0; j < sectors; j++) {
+                uint32_t a = i * (sectors + 1) + j;
+                uint32_t b = a + sectors + 1;
+                indices.insert(indices.end(), { a, b, a + 1, b, b + 1, a + 1 });
+            }
+        }
+        m_SphereVA = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(verts.data(), (uint32_t)(verts.size() * sizeof(float)));
+        vb->SetLayout({ {Purr::ShaderDataType::Float3,"a_Position"},{Purr::ShaderDataType::Float3,"a_Normal"},{Purr::ShaderDataType::Float2,"a_TexCoord"} });
+        m_SphereVA->AddVertexBuffer(vb);
+        m_SphereVA->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(indices.data(), (uint32_t)indices.size()));
+    }
+
     void BuildPlaneMesh() {
         float verts[] = {
             -0.5f,0,-0.5f, 0,1,0, 0,0,
@@ -1647,7 +1683,7 @@ private:
 
     // Renderer
     std::shared_ptr<Purr::VertexArray>  m_VA, m_PlaneVA, m_BBoxVA;
-    std::shared_ptr<Purr::VertexArray>  m_TriangleVA, m_CircleVA, m_RegPolygonVA, m_EllipseVA;
+    std::shared_ptr<Purr::VertexArray>  m_TriangleVA, m_CircleVA, m_RegPolygonVA, m_EllipseVA, m_SphereVA;
     std::shared_ptr<Purr::Shader>       m_Shader, m_TexShader, m_WireShader;
     std::shared_ptr<Purr::Texture>      m_CheckerTex;
     std::shared_ptr<Purr::Framebuffer>  m_Framebuffer;
