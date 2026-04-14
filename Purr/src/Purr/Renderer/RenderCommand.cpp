@@ -29,4 +29,12 @@ namespace Purr {
         if (enabled) glEnable(GL_DEPTH_TEST);
         else         glDisable(GL_DEPTH_TEST);
     }
+
+    void RenderCommand::ReadPixels(int x, int y, int width, int height, std::vector<uint8_t>& outPixels)
+    {
+        outPixels.resize(width * height * 3);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);  
+        glReadPixels(x, y, width, height, GL_RGB, GL_UNSIGNED_BYTE, outPixels.data());
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);   
+    }
 }

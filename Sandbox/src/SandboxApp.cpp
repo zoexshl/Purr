@@ -376,6 +376,54 @@ public:
         if (ImGui::Button("> Redo")) Redo();
         if (!canRedo) ImGui::EndDisabled();
 
+
+    
+
+
+        // ---- Histogramme --------------------------------------------------
+        ImGui::Separator();
+
+        if (ImGui::Button("Calculer histogramme"))
+            ComputeHistogram();
+
+        if (!m_HistR.empty())
+        {
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            float W = ImGui::GetContentRegionAvail().x;
+            float H = 120.0f;
+
+            // fond
+            dl->AddRectFilled(p, ImVec2(p.x + W, p.y + H), IM_COL32(30, 30, 30, 255));
+
+            // normalise sur le max global (ignore bin 0 = fond noir)
+            int maxVal = 1;
+            for (int i = 1; i < 256; i++) {
+                maxVal = std::max(maxVal, m_HistR[i]);
+                maxVal = std::max(maxVal, m_HistG[i]);
+                maxVal = std::max(maxVal, m_HistB[i]);
+            }
+
+            float binW = W / 256.0f;
+            for (int i = 0; i < 256; i++) {
+                float x0 = p.x + i * binW;
+                float x1 = x0 + std::max(1.0f, binW);
+
+                float rH = (m_HistR[i] / (float)maxVal) * H;
+                float gH = (m_HistG[i] / (float)maxVal) * H;
+                float bH = (m_HistB[i] / (float)maxVal) * H;
+
+                dl->AddRectFilled({ x0, p.y + H - rH }, { x1, p.y + H }, IM_COL32(255, 60, 60, 120));
+                dl->AddRectFilled({ x0, p.y + H - gH }, { x1, p.y + H }, IM_COL32(60, 255, 60, 120));
+                dl->AddRectFilled({ x0, p.y + H - bH }, { x1, p.y + H }, IM_COL32(60, 60, 255, 120));
+            }
+
+            // avance le curseur pour que ImGui sache que l'espace est utilisé
+            ImGui::Dummy(ImVec2(W, H));
+
+            ImGui::TextDisabled("R  G  B  (superposés)");
+        }
+
         ImGui::End();
 
     
@@ -487,7 +535,33 @@ public:
         m_Selected = glm::clamp(m_Selected, -1, (int)m_Objects.size() - 1);
     }
 
+    void ComputeHistogram()
+    {
+        auto& spec = m_Framebuffer->GetSpec();  
+        int w = (int)spec.Width, h = (int)spec.Height;
+        if (w <= 0 || h <= 0) return;
+
+        std::vector<uint8_t> pixels;
+        m_Framebuffer->Bind();
+        Purr::RenderCommand::ReadPixels(0, 0, w, h, pixels);
+        m_Framebuffer->Unbind();
+
+        m_HistR.assign(256, 0);
+        m_HistG.assign(256, 0);
+        m_HistB.assign(256, 0);
+
+        for (int i = 0; i < w * h; i++) {
+            m_HistR[pixels[i * 3 + 0]]++;
+            m_HistG[pixels[i * 3 + 1]]++;
+            m_HistB[pixels[i * 3 + 2]]++;
+        }
+    }
+
+
 private:
+
+
+
     // -----------------------------------------------------------------------
     // Hit-test : retourne l'axe du gizmo le plus proche du curseur (NDC)
     // -----------------------------------------------------------------------
@@ -803,6 +877,9 @@ private:
     std::vector<std::vector<SceneObject>> m_UndoStack;
     std::vector<std::vector<SceneObject>> m_RedoStack;
     static constexpr int k_MaxHistory = 50;
+
+    // Histogramme
+    std::vector<int> m_HistR, m_HistG, m_HistB;
 };
 
 // -----------------------------------------------------------------------

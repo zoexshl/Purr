@@ -4,6 +4,7 @@
 namespace Purr {
     class RenderCommand {
     public:
+        static void ReadPixels(int x, int y, int width, int height, std::vector<uint8_t>& outPixels);
         static void DrawLines(const std::shared_ptr<VertexArray>& va);
         static void DrawWireframe(const std::shared_ptr<VertexArray>& va);
         static void EnableDepthTest();
