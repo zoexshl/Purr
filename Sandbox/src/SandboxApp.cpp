@@ -51,6 +51,19 @@ struct Material {
     IlluminationModel Model = IlluminationModel::Phong;
 };
 
+// -----------------------------------------------------------------------
+// Script system
+// -----------------------------------------------------------------------
+class ScriptComponent {
+public:
+    virtual ~ScriptComponent() = default;
+    virtual void OnStart() {}
+    virtual void OnUpdate(float dt) {}
+
+    struct SceneObject* Owner = nullptr; // forward declare, assigné au Play
+};
+
+
 struct SceneObject {
     std::string Name;
     glm::vec3 Position = { 0,0,0 }, Rotation = { 0,0,0 }, Scale = { 1,1,1 };
@@ -59,6 +72,25 @@ struct SceneObject {
     std::shared_ptr<Purr::Texture> Tex = nullptr;
     std::string TexPath = "";
     std::string MeshPath = "";
+
+    std::unique_ptr<ScriptComponent> Script;
+
+
+    // Copy ctor : copie tout sauf le script (les snapshots n'ont pas besoin de scripts)
+    SceneObject(const SceneObject& o)
+        : Name(o.Name), Position(o.Position), Rotation(o.Rotation), Scale(o.Scale)
+        , Mat(o.Mat), Type(o.Type), Tex(o.Tex), TexPath(o.TexPath), MeshPath(o.MeshPath)
+        , Script(nullptr)
+    {
+    }
+    SceneObject& operator=(const SceneObject& o)
+    {
+        Name = o.Name; Position = o.Position; Rotation = o.Rotation; Scale = o.Scale;
+        Mat = o.Mat; Type = o.Type; Tex = o.Tex; TexPath = o.TexPath; MeshPath = o.MeshPath;
+        Script = nullptr;
+        return *this;
+    }
+    SceneObject() = default;
 
     glm::mat4 GetTransform() const {
         glm::mat4 t = glm::translate(glm::mat4(1.0f), Position);
@@ -69,6 +101,56 @@ struct SceneObject {
     }
 };
 
+
+
+class CatScript : public ScriptComponent {
+public:
+    float Speed = 3.0f;
+    float BobAmp = 0.06f;   // amplitude du "bounce" vertical
+    float BobSpeed = 8.0f;
+    float RotSpeed = 90.0f;   // degrés/sec pour la rotation
+
+    void OnStart() override
+    {
+        m_BaseY = Owner->Position.y;
+        m_Time = 0.0f;
+    }
+
+    void OnUpdate(float dt) override
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        glm::vec3 move = { 0,0,0 };
+
+        if (ImGui::IsKeyDown(ImGuiKey_A)) move.x -= 1.0f;
+        if (ImGui::IsKeyDown(ImGuiKey_D)) move.x += 1.0f;
+        if (ImGui::IsKeyDown(ImGuiKey_W)) move.z -= 1.0f;
+        if (ImGui::IsKeyDown(ImGuiKey_S)) move.z += 1.0f;
+
+        bool moving = glm::length(move) > 0.0f;
+
+        if (moving)
+        {
+            move = glm::normalize(move) * Speed * dt;
+            Owner->Position += move;
+
+            // Rotation vers la direction de mouvement
+            float targetAngle = glm::degrees(atan2f(move.x, move.z));
+            float diff = targetAngle - Owner->Rotation.y;
+            // wrap
+            while (diff > 180.0f) diff -= 360.0f;
+            while (diff < -180.0f) diff += 360.0f;
+            Owner->Rotation.y += diff * RotSpeed * dt * 0.1f;
+        }
+
+        // Bob vertical (toujours, ou seulement en mouvement)
+        m_Time += dt;
+        Owner->Position.y = m_BaseY + (moving ? sinf(m_Time * BobSpeed) * BobAmp : 0.0f);
+    }
+
+private:
+    float m_BaseY = 0.0f;
+    float m_Time = 0.0f;
+};
 // -----------------------------------------------------------------------
 // Gizmo enums
 // -----------------------------------------------------------------------
@@ -160,11 +242,17 @@ public:
 
     void EnterPlayMode()
     {
-        m_SavedScene = m_Objects;           // snapshot
+        m_SavedScene = m_Objects;
         m_State = EngineState::Playing;
         m_GizmoDragging = false;
         m_ActiveAxis = GizmoAxis::None;
-        // future : appeler OnStart() sur tous les scripts ici
+
+        // Assigner les scripts à chaque Play
+        if (!m_Objects.empty())
+            m_Objects[0].Script = std::make_unique<CatScript>();
+
+        for (auto& obj : m_Objects)
+            if (obj.Script) { obj.Script->Owner = &obj; obj.Script->OnStart(); }
     }
 
     void StopPlayMode()
@@ -389,6 +477,14 @@ public:
 
 
         } // fin du mode Editor *_*
+
+        // Scripts — seulement en Play mode
+        if (m_State == EngineState::Playing)
+        {
+            for (auto& obj : m_Objects)
+                if (obj.Script) obj.Script->OnUpdate(dt);
+        }
+
 
         // Play / Stop : Space
         if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space))
