@@ -10,6 +10,7 @@
 #include <commdlg.h>
 #include "nlohmann/json.hpp"
 #include "Purr/ObjLoader.h"
+
 using json = nlohmann::json;
 
 // -----------------------------------------------------------------------
@@ -79,6 +80,7 @@ enum class GizmoMode { Translate, Rotate, Scale };
 // -----------------------------------------------------------------------
 class ExampleLayer : public Purr::Layer {
 public:
+    // Constructeur
     ExampleLayer() : Layer("Example"), m_Camera(60.0f, 1280.0f / 720.0f)
     {
         BuildCubeMesh(); BuildPlaneMesh();
@@ -112,12 +114,53 @@ public:
         plane.Tex = m_CheckerTex;
         m_Objects.push_back(plane);
 
+        // inititialisation de la selection 
+        m_Selected = 0;
+        m_Selection.insert(0);
+
         m_Lights[0].Position = { 3.0f, 3.0f,  3.0f }; m_Lights[0].Color = { 1.0f,1.0f,1.0f };
         m_Lights[1].Position = { -3.0f, 2.0f,  2.0f }; m_Lights[1].Color = { 1.0f,0.4f,0.4f };
         m_Lights[2].Position = { 0.0f, 4.0f, -3.0f }; m_Lights[2].Color = { 0.4f,0.6f,1.0f };
         m_Lights[3].Position = { 0.0f,-2.0f,  0.0f }; m_Lights[3].Color = { 0.8f,1.0f,0.4f };
         m_Lights[3].Enabled = false;
     }
+
+    // ---- Helpers sélection ----
+    bool IsSelected(int i) const { return m_Selection.count(i) > 0; }
+
+    void SetPrimarySelected(int i)
+    {
+        m_Selected = i;
+        m_Selection.clear();
+        if (i >= 0 && i < (int)m_Objects.size()) m_Selection.insert(i);
+    }
+
+    void ToggleSelected(int i)
+    {
+        if (i < 0 || i >= (int)m_Objects.size()) return;
+        if (m_Selection.count(i)) {
+            m_Selection.erase(i);
+            if (m_Selected == i)
+                m_Selected = m_Selection.empty() ? -1 : *m_Selection.begin();
+        }
+        else {
+            m_Selection.insert(i);
+            m_Selected = i;
+        }
+    }
+
+    void DeleteSelection()
+    {
+        if (m_Selection.empty()) return;
+        SaveSnapshot();
+        std::vector<int> sorted(m_Selection.begin(), m_Selection.end());
+        std::sort(sorted.rbegin(), sorted.rend());   // erase de la fin
+        for (int idx : sorted) m_Objects.erase(m_Objects.begin() + idx);
+        m_Selection.clear();
+        m_Selected = m_Objects.empty() ? -1 : 0;
+        if (m_Selected >= 0) m_Selection.insert(m_Selected);
+    }
+
 
     void OnAttach() override { Purr::RenderCommand::EnableDepthTest(); }
 
@@ -135,7 +178,7 @@ public:
         }
 
         ImGuiIO& io = ImGui::GetIO();
-        // Undo / Redo -----  Ctrl+Z/ Ctrl+Y
+        // Undo / Redo -----  Ctrl+Z/ Ctrl+Y - Raccourcis Clavier
         if (!io.WantTextInput)
         {
             if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) Undo();
@@ -143,6 +186,34 @@ public:
             if (ImGui::IsKeyPressed(ImGuiKey_T)) m_GizmoMode = GizmoMode::Translate;
             if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoMode = GizmoMode::Rotate;
             if (ImGui::IsKeyPressed(ImGuiKey_S)) m_GizmoMode = GizmoMode::Scale;
+
+            // ---- Supprimer [Del] ----
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !m_Selection.empty())
+                DeleteSelection();
+
+            // ---- Copier [Ctrl+C] ----
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !m_Selection.empty())
+            {
+                m_Clipboard.clear();
+                std::vector<int> sorted(m_Selection.begin(), m_Selection.end());
+                std::sort(sorted.begin(), sorted.end());
+                for (int idx : sorted) m_Clipboard.push_back(m_Objects[idx]);
+            }
+
+            // ---- Coller [Ctrl+V] ----
+            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !m_Clipboard.empty())
+            {
+                SaveSnapshot();
+                m_Selection.clear();
+                for (auto obj : m_Clipboard)
+                {
+                    obj.Position += glm::vec3(0.5f, 0.0f, 0.5f);
+                    obj.Name += " (copie)";
+                    m_Objects.push_back(obj);
+                    m_Selection.insert((int)m_Objects.size() - 1);
+                }
+                m_Selected = *m_Selection.begin();
+            }
         }
 
         // Orbite (clic droit, seulement si pas en train de dragger le gizmo)
@@ -197,7 +268,9 @@ public:
                 if (screenLen > 0.0001f)
                 {
                     float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
-                    pos += axisDir * t;
+                    glm::vec3 move = axisDir * t;
+                    for (int idx : m_Selection)
+                        m_Objects[idx].Position += move;
                 }
             }
             else if (m_GizmoMode == GizmoMode::Rotate)
@@ -234,7 +307,8 @@ public:
                     // Uniform scale: mouvement horizontal total
                     float t = delta.x * 3.0f;
                     float factor = 1.0f + t;
-                    scl = glm::max(scl * factor, glm::vec3(0.001f));
+                    for (int idx : m_Selection)
+                        m_Objects[idx].Scale = glm::max(m_Objects[idx].Scale * factor, glm::vec3(0.001f));
                 }
                 else
                 {
@@ -253,9 +327,12 @@ public:
                     if (screenLen > 0.0001f)
                     {
                         float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
-                        if (m_ActiveAxis == GizmoAxis::X) scl.x = glm::max(scl.x + t * 2.0f, 0.001f);
-                        else if (m_ActiveAxis == GizmoAxis::Y) scl.y = glm::max(scl.y + t * 2.0f, 0.001f);
-                        else if (m_ActiveAxis == GizmoAxis::Z) scl.z = glm::max(scl.z + t * 2.0f, 0.001f);
+                        float delta_t = t * 2.0f;
+                        for (int idx : m_Selection) {
+                            if (m_ActiveAxis == GizmoAxis::X) m_Objects[idx].Scale.x = glm::max(m_Objects[idx].Scale.x + delta_t, 0.001f);
+                            else if (m_ActiveAxis == GizmoAxis::Y) m_Objects[idx].Scale.y = glm::max(m_Objects[idx].Scale.y + delta_t, 0.001f);
+                            else if (m_ActiveAxis == GizmoAxis::Z) m_Objects[idx].Scale.z = glm::max(m_Objects[idx].Scale.z + delta_t, 0.001f);
+                        }
                     }
                 }
             }
@@ -352,17 +429,19 @@ public:
             }
         }
 
-        // Bounding box
-        if (m_Selected >= 0 && m_Selected < (int)m_Objects.size())
+        // Bounding boxes pour tous les sélectionnés
+        m_WireShader->Bind();
+        m_WireShader->SetMat4("u_VP", m_Camera.GetViewProjection());
+        for (int idx : m_Selection)
         {
-            auto& obj = m_Objects[m_Selected];
+            if (idx < 0 || idx >= (int)m_Objects.size()) continue;
+            auto& obj = m_Objects[idx];
             glm::mat4 model = glm::translate(glm::mat4(1.0f), obj.Position);
             model = glm::rotate(model, glm::radians(obj.Rotation.x), { 1,0,0 });
             model = glm::rotate(model, glm::radians(obj.Rotation.y), { 0,1,0 });
             model = glm::rotate(model, glm::radians(obj.Rotation.z), { 0,0,1 });
+            // Couleur différente pour le pivot vs les autres sélectionnés
             model = glm::scale(model, obj.Scale * 1.02f);
-            m_WireShader->Bind();
-            m_WireShader->SetMat4("u_VP", m_Camera.GetViewProjection());
             m_WireShader->SetMat4("u_Model", model);
             m_BBoxVA->Bind();
             Purr::RenderCommand::DrawLines(m_BBoxVA);
@@ -564,10 +643,20 @@ public:
         // ---- Scene list ----
         for (int i = 0; i < (int)m_Objects.size(); i++) {
             ImGui::PushID(i);
-            bool sel = (m_Selected == i);
-            if (ImGui::Selectable(m_Objects[i].Name.c_str(), sel)) m_Selected = i;
+            bool sel = IsSelected(i);
+            bool pushedColor = (sel && i != m_Selected);  
+            if (pushedColor)
+                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.6f, 0.3f, 0.5f, 0.6f));
+
+            if (ImGui::Selectable(m_Objects[i].Name.c_str(), sel, ImGuiSelectableFlags_AllowOverlap)) {
+                if (ImGui::GetIO().KeyCtrl) ToggleSelected(i);
+                else SetPrimarySelected(i);  
+            }
+
+            if (pushedColor) ImGui::PopStyleColor(); 
             ImGui::PopID();
         }
+        ImGui::TextDisabled("Ctrl+Click = multi-selection");
 
 
         ImGui::Separator();
@@ -603,15 +692,14 @@ public:
             }
             ImGui::EndPopup();
         }
-        if (m_Selected >= 0 && m_Selected < (int)m_Objects.size()) {
+        if (!m_Selection.empty()) {
             ImGui::SameLine();
-            if (ImGui::Button("-  Supprimer")) {
-                SaveSnapshot();
-                m_Objects.erase(m_Objects.begin() + m_Selected);
-                m_Selected = glm::max(0, m_Selected - 1);
-            }
+            std::string delLabel = m_Selection.size() > 1
+                ? ("-  Supprimer (" + std::to_string(m_Selection.size()) + ")")
+                : "-  Supprimer";
+            if (ImGui::Button(delLabel.c_str()))
+                DeleteSelection();
         }
-
 
 
         // ----- Undo / Redo -------------------------------------------------
@@ -800,6 +888,46 @@ public:
             ImGui::Text("Modele d'illumination");
             int model = (int)obj.Mat.Model;
             if (ImGui::Combo("##illum", &model, s_ModelNames, 3)) obj.Mat.Model = (IlluminationModel)model;
+           
+            
+            
+            
+            // ---- Multi-sélection ----
+            if (m_Selection.size() > 1)
+            {
+                ImGui::Separator();
+                ImGui::TextColored({ 0.9f,0.5f,0.9f,1.0f },
+                    "%zu objets selectionnes", m_Selection.size());
+
+                // Scale uniforme pour tous
+                static glm::vec3 s_BulkScale = { 1.0f, 1.0f, 1.0f };
+                ImGui::DragFloat3("Scale (tous)", glm::value_ptr(s_BulkScale), 0.01f, 0.01f, 10.0f);
+                if (ImGui::IsItemDeactivatedAfterEdit())
+                {
+                    SaveSnapshot();
+                    for (int idx : m_Selection)
+                    {
+                        m_Objects[idx].Scale *= s_BulkScale;
+                        m_Objects[idx].Scale = glm::max(m_Objects[idx].Scale, glm::vec3(0.001f));
+                    }
+                    s_BulkScale = { 1.0f, 1.0f, 1.0f };
+                }
+
+                // Copier / Coller / Supprimer depuis Properties
+                ImGui::Separator();
+                if (ImGui::Button("Copier selection")) {
+                    m_Clipboard.clear();
+                    std::vector<int> sorted(m_Selection.begin(), m_Selection.end());
+                    std::sort(sorted.begin(), sorted.end());
+                    for (int idx : sorted) m_Clipboard.push_back(m_Objects[idx]);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Supprimer selection"))
+                    DeleteSelection();
+            }
+            
+            
+            
             ImGui::End();
         }
     }
@@ -1508,8 +1636,12 @@ private:
 
 private:
     // Scene
-    std::vector<SceneObject> m_Objects;
-    int   m_Selected = 0;
+    std::vector<SceneObject>     m_Objects;
+    int                          m_Selected = 0;          // pivot principal (gizmo)
+    std::unordered_set<int>      m_Selection;             // tous les sélectionnés
+    std::vector<SceneObject>     m_Clipboard;             // copier/coller
+
+
     Light m_Lights[4];
     float m_AmbientStrength = 0.15f;
 
