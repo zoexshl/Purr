@@ -10,6 +10,8 @@
 #include <commdlg.h>
 #include "nlohmann/json.hpp"
 #include "Purr/ObjLoader.h"
+#define GLM_ENABLE_EXPERIMENTAL //ajouté apres avoir etre engeulé par compilateur . 
+#include <glm/gtx/matrix_decompose.hpp> // cas gerer parentng
 
 using json = nlohmann::json;
 
@@ -63,32 +65,28 @@ public:
     struct SceneObject* Owner = nullptr; // forward declare, assigné au Play
 };
 
-
 struct SceneObject {
     std::string Name;
+    int ParentIndex = -1;                          
     glm::vec3 Position = { 0,0,0 }, Rotation = { 0,0,0 }, Scale = { 1,1,1 };
     Material Mat;
     PrimitiveType Type = PrimitiveType::Cube;
     std::shared_ptr<Purr::Texture> Tex = nullptr;
-    std::string TexPath = "";
-    std::string MeshPath = "";
-
+    std::string TexPath = "", MeshPath = "";
     std::unique_ptr<ScriptComponent> Script;
 
-
-    // Copy ctor : copie tout sauf le script (les snapshots n'ont pas besoin de scripts)
     SceneObject(const SceneObject& o)
-        : Name(o.Name), Position(o.Position), Rotation(o.Rotation), Scale(o.Scale)
+        : Name(o.Name), ParentIndex(o.ParentIndex)  // copier ParentIndex
+        , Position(o.Position), Rotation(o.Rotation), Scale(o.Scale)
         , Mat(o.Mat), Type(o.Type), Tex(o.Tex), TexPath(o.TexPath), MeshPath(o.MeshPath)
-        , Script(nullptr)
-    {
+        , Script(nullptr) {
     }
-    SceneObject& operator=(const SceneObject& o)
-    {
-        Name = o.Name; Position = o.Position; Rotation = o.Rotation; Scale = o.Scale;
+
+    SceneObject& operator=(const SceneObject& o) {
+        Name = o.Name; ParentIndex = o.ParentIndex;     
+        Position = o.Position; Rotation = o.Rotation; Scale = o.Scale;
         Mat = o.Mat; Type = o.Type; Tex = o.Tex; TexPath = o.TexPath; MeshPath = o.MeshPath;
-        Script = nullptr;
-        return *this;
+        Script = nullptr; return *this;
     }
     SceneObject() = default;
 
@@ -98,6 +96,17 @@ struct SceneObject {
         t = glm::rotate(t, glm::radians(Rotation.y), { 0,1,0 });
         t = glm::rotate(t, glm::radians(Rotation.z), { 0,0,1 });
         return glm::scale(t, Scale);
+    }
+
+ 
+    glm::mat4 GetWorldTransform(const std::vector<SceneObject>& objs) const {
+        if (ParentIndex >= 0 && ParentIndex < (int)objs.size())
+            return objs[ParentIndex].GetWorldTransform(objs) * GetTransform();
+        return GetTransform();
+    }
+
+    glm::vec3 GetWorldPosition(const std::vector<SceneObject>& objs) const {
+        return glm::vec3(GetWorldTransform(objs)[3]);
     }
 };
 
@@ -206,6 +215,120 @@ public:
         m_Lights[3].Position = { 0.0f,-2.0f,  0.0f }; m_Lights[3].Color = { 0.8f,1.0f,0.4f };
         m_Lights[3].Enabled = false;
     }
+
+    //  ---- Helper Hierarchie Recursive -----
+
+    void DrawHierarchyNode(int i)
+    {
+        static const char* s_TypeIcons[] = { "[C]","[P]","[T]","[O]","[N]","[E]","[S]","[M]" };
+        ImGui::PushID(i);
+
+        // Trouver les enfants directs
+        std::vector<int> children;
+        for (int j = 0; j < (int)m_Objects.size(); j++)
+            if (m_Objects[j].ParentIndex == i) children.push_back(j);
+
+        if (m_RenamingIndex == i)
+        {
+            if (m_RenameFocusPending) { ImGui::SetKeyboardFocusHere(0); m_RenameFocusPending = false; }
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::InputText("##ren", m_RenameBuffer, sizeof(m_RenameBuffer),
+                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
+                CommitRename(i);
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape))  m_RenamingIndex = -1;
+            if (!ImGui::IsItemActive() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) CommitRename(i);
+        }
+        else
+        {
+            const char* icon = (int)m_Objects[i].Type < 8 ? s_TypeIcons[(int)m_Objects[i].Type] : "[?]";
+            std::string label = std::string(icon) + "  " + m_Objects[i].Name;
+
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow;
+            if (children.empty()) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+            bool sel = IsSelected(i);
+            bool isPivot = (sel && i == m_Selected);
+            if (sel) flags |= ImGuiTreeNodeFlags_Selected;
+
+            if (isPivot)     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.85f, 0.3f, 0.6f, 0.85f));
+            else if (sel)    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.55f, 0.25f, 0.45f, 0.6f));
+
+            bool open = ImGui::TreeNodeEx(label.c_str(), flags);
+
+            if (isPivot || sel) ImGui::PopStyleColor();
+
+            // Sélection
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+                if (ImGui::GetIO().KeyCtrl) ToggleSelected(i);
+                else SetPrimarySelected(i);
+            }
+            // Renommer
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                m_RenamingIndex = i; m_RenameFocusPending = true;
+                strncpy_s(m_RenameBuffer, sizeof(m_RenameBuffer), m_Objects[i].Name.c_str(), _TRUNCATE);
+            }
+
+            // ---- Drag source ----
+            if (ImGui::BeginDragDropSource()) {
+                ImGui::SetDragDropPayload("HIERARCHY_NODE", &i, sizeof(int));
+                ImGui::Text("Deplacer : %s", m_Objects[i].Name.c_str());
+                ImGui::EndDragDropSource();
+            }
+            // ---- Drop target : reparenter ----
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("HIERARCHY_NODE")) {
+                    int src = *(const int*)p->Data;
+                    if (src != i && !IsAncestor(i, src))   // pas de cycle
+                        ReparentKeepWorld(src, i);
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            // Récursion sur les enfants
+            if (open && !children.empty()) {
+                for (int child : children) DrawHierarchyNode(child);
+                ImGui::TreePop();
+            }
+        }
+
+        ImGui::PopID();
+    }
+
+    // Vérifie si 'candidate' est un ancêtre de 'node' (pour éviter les cycles)
+    bool IsAncestor(int candidate, int node) const
+    {
+        int cur = m_Objects[node].ParentIndex;
+        while (cur >= 0) {
+            if (cur == candidate) return true;
+            cur = m_Objects[cur].ParentIndex;
+        }
+        return false;
+    }
+
+    // helper pour hierarchie parent localisation relative a lui 
+
+    void ReparentKeepWorld(int src, int newParent)
+    {
+        // Capture la transform monde AVANT de changer le parent
+        glm::mat4 worldMat = m_Objects[src].GetWorldTransform(m_Objects);
+        m_Objects[src].ParentIndex = newParent;
+
+        // Calcule la nouvelle transform locale
+        glm::mat4 newLocal = (newParent >= 0)
+            ? glm::inverse(m_Objects[newParent].GetWorldTransform(m_Objects)) * worldMat
+            : worldMat;
+
+        // Décompose en position / rotation / scale
+        glm::vec3 scale, translation, skew;
+        glm::vec4 perspective;
+        glm::quat orientation;
+        glm::decompose(newLocal, scale, orientation, translation, skew, perspective);
+
+        m_Objects[src].Position = translation;
+        m_Objects[src].Scale = scale;
+        m_Objects[src].Rotation = glm::degrees(glm::eulerAngles(orientation));
+    }
+
 
     // ---- Helpers sélection ----
     bool IsSelected(int i) const { return m_Selection.count(i) > 0; }
@@ -371,7 +494,7 @@ public:
                 glm::vec2 delta = { io.MouseDelta.x / m_ViewportSize.x * 2.0f,
                                    -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
 
-                glm::vec3& pos = m_Objects[m_Selected].Position;
+                glm::vec3 pos = m_Objects[m_Selected].GetWorldPosition(m_Objects);
                 glm::vec3 axisDir = (m_ActiveAxis == GizmoAxis::X) ? glm::vec3(1, 0, 0) :
                     (m_ActiveAxis == GizmoAxis::Y) ? glm::vec3(0, 1, 0) :
                     glm::vec3(0, 0, 1);
@@ -518,7 +641,7 @@ public:
 
         for (auto& obj : m_Objects)
         {
-            glm::mat4 model = obj.GetTransform();
+            glm::mat4 model = obj.GetWorldTransform(m_Objects);
             glm::mat4 normalMat = glm::transpose(glm::inverse(model));
 
             /*
@@ -573,12 +696,12 @@ public:
         {
             if (idx < 0 || idx >= (int)m_Objects.size()) continue;
             auto& obj = m_Objects[idx];
-            glm::mat4 model = glm::translate(glm::mat4(1.0f), obj.Position);
+            glm::mat4 model = obj.GetWorldTransform(m_Objects);
             model = glm::rotate(model, glm::radians(obj.Rotation.x), { 1,0,0 });
             model = glm::rotate(model, glm::radians(obj.Rotation.y), { 0,1,0 });
             model = glm::rotate(model, glm::radians(obj.Rotation.z), { 0,0,1 });
             // Couleur différente pour le pivot vs les autres sélectionnés
-            model = glm::scale(model, obj.Scale * 1.02f);
+            model = glm::scale(model, glm::vec3(1.02f));
             m_WireShader->SetMat4("u_Model", model);
             m_BBoxVA->Bind();
             Purr::RenderCommand::DrawLines(m_BBoxVA);
@@ -610,7 +733,7 @@ public:
                 for (auto& a : axes)
                 {
                     glm::mat4 model =
-                        glm::translate(glm::mat4(1.0f), obj.Position) *
+                        glm::translate(glm::mat4(1.0f), obj.GetWorldPosition(m_Objects)) *
                         a.rot *
                         glm::scale(glm::mat4(1.0f), glm::vec3(scale));
 
@@ -640,7 +763,7 @@ public:
                 for (auto& r : rings)
                 {
                     glm::mat4 model =
-                        glm::translate(glm::mat4(1.0f), obj.Position) *
+                        glm::translate(glm::mat4(1.0f), obj.GetWorldPosition(m_Objects)) *
                         r.rot *
                         glm::scale(glm::mat4(1.0f), glm::vec3(scale));
 
@@ -667,7 +790,7 @@ public:
                 for (auto& a : axes)
                 {
                     glm::mat4 model =
-                        glm::translate(glm::mat4(1.0f), obj.Position) *
+                        glm::translate(glm::mat4(1.0f), obj.GetWorldPosition(m_Objects)) *
                         a.rot *
                         glm::scale(glm::mat4(1.0f), glm::vec3(scale));
 
@@ -682,7 +805,7 @@ public:
                 {
                     float cs = scale * 0.18f;
                     glm::mat4 model =
-                        glm::translate(glm::mat4(1.0f), obj.Position) *
+                        glm::translate(glm::mat4(1.0f), obj.GetWorldPosition(m_Objects)) *
                         glm::scale(glm::mat4(1.0f), glm::vec3(cs));
 
                     m_GizmoShader->SetMat4("u_Model", model);
@@ -808,72 +931,26 @@ public:
         ImGui::Separator();
         ImGui::Text("Objets (%zu)", m_Objects.size());
 
-        // ---- Scene list ----
-        static const char* s_TypeIcons[] = { "[C]","[P]","[T]","[O]","[N]","[E]","[S]","[M]" };
 
+   
+
+        // ---- Scene list (hiérarchique) ----
         for (int i = 0; i < (int)m_Objects.size(); i++)
-        {
-            ImGui::PushID(i);
+            if (m_Objects[i].ParentIndex == -1)    // racines seulement
+                DrawHierarchyNode(i);
 
-            if (m_RenamingIndex == i)
-            {
-                // --- Mode renommage ---
-                if (m_RenameFocusPending) {
-                    ImGui::SetKeyboardFocusHere(0);
-                    m_RenameFocusPending = false;
-                }
-                ImGui::SetNextItemWidth(-1.0f);
-                if (ImGui::InputText("##ren", m_RenameBuffer, sizeof(m_RenameBuffer),
-                    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll))
-                    CommitRename(i);
-                if (ImGui::IsKeyPressed(ImGuiKey_Escape))
-                    m_RenamingIndex = -1;
-                // Clic ailleurs = confirme
-                if (!ImGui::IsItemActive() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-                    CommitRename(i);
+        // Drop sur zone vide = détacher du parent
+        ImGui::InvisibleButton("##droprootzone", ImVec2(-1, 20));
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("HIERARCHY_NODE")) {
+                int src = *(const int*)p->Data;
+                ReparentKeepWorld(src, -1);
             }
-            else
-            {
-                // --- Affichage normal ---
-                const char* icon = (int)m_Objects[i].Type < 8 ? s_TypeIcons[(int)m_Objects[i].Type] : "[?]";
-                std::string label = std::string(icon) + "  " + m_Objects[i].Name;
-
-                ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf
-                    | ImGuiTreeNodeFlags_NoTreePushOnOpen
-                    | ImGuiTreeNodeFlags_SpanAvailWidth;
-
-                bool sel = IsSelected(i);
-                bool isPivot = (sel && i == m_Selected);
-                if (sel)     flags |= ImGuiTreeNodeFlags_Selected;
-
-                // Couleur : pivot = rose vif, multi-sélection secondaire = rose pâle
-                if (isPivot)
-                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.85f, 0.3f, 0.6f, 0.85f));
-                else if (sel)
-                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.55f, 0.25f, 0.45f, 0.6f));
-
-                ImGui::TreeNodeEx(label.c_str(), flags);
-
-                if (isPivot || sel) ImGui::PopStyleColor();
-
-                // Clic simple = sélection
-                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-                    if (ImGui::GetIO().KeyCtrl) ToggleSelected(i);
-                    else SetPrimarySelected(i);
-                }
-
-                // Double-clic = renommer
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    m_RenamingIndex = i;
-                    m_RenameFocusPending = true;
-                    strncpy_s(m_RenameBuffer, sizeof(m_RenameBuffer),
-                        m_Objects[i].Name.c_str(), _TRUNCATE);
-                }
-            }
-
-            ImGui::PopID();
+            ImGui::EndDragDropTarget();
         }
-        ImGui::TextDisabled("Ctrl+Click = multi  |  Double-clic = renommer");
+        ImGui::TextDisabled("Ctrl+Click = multi  |  Double-clic = renommer  |  Drag = reparenter");
+
+
 
         ImGui::Separator();
         if (ImGui::Button("+ Add"))
