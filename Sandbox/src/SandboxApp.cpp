@@ -10,6 +10,7 @@
 #include <commdlg.h>
 #include "nlohmann/json.hpp"
 #include "Purr/ObjLoader.h"
+#include "Purr/Renderer/TextureManager.h"
 #define GLM_ENABLE_EXPERIMENTAL //ajouté apres avoir etre engeulé par compilateur . 
 #include <glm/gtx/matrix_decompose.hpp> // cas gerer parentng
 
@@ -67,27 +68,34 @@ public:
 };
 
 struct SceneObject {
+    struct RenderPart {
+        std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
+        std::shared_ptr<Purr::Texture> Texture = nullptr;
+        std::string TexturePath;
+    };
+
     std::string Name;
-    int ParentIndex = -1;                          
+    int ParentIndex = -1;
     glm::vec3 Position = { 0,0,0 }, Rotation = { 0,0,0 }, Scale = { 1,1,1 };
     Material Mat;
     PrimitiveType Type = PrimitiveType::Cube;
     std::shared_ptr<Purr::Texture> Tex = nullptr;
     std::string TexPath = "", MeshPath = "";
+    std::vector<RenderPart> Parts;
     std::unique_ptr<ScriptComponent> Script;
     float TexTiling = 1.0f;
 
     SceneObject(const SceneObject& o)
         : Name(o.Name), ParentIndex(o.ParentIndex)  // copier ParentIndex
         , Position(o.Position), Rotation(o.Rotation), Scale(o.Scale)
-        , Mat(o.Mat), Type(o.Type), Tex(o.Tex), TexPath(o.TexPath), MeshPath(o.MeshPath)
+        , Mat(o.Mat), Type(o.Type), Tex(o.Tex), TexPath(o.TexPath), MeshPath(o.MeshPath), Parts(o.Parts)
         , Script(nullptr) {
     }
 
     SceneObject& operator=(const SceneObject& o) {
-        Name = o.Name; ParentIndex = o.ParentIndex;     
+        Name = o.Name; ParentIndex = o.ParentIndex;
         Position = o.Position; Rotation = o.Rotation; Scale = o.Scale;
-        Mat = o.Mat; Type = o.Type; Tex = o.Tex; TexPath = o.TexPath; MeshPath = o.MeshPath;
+        Mat = o.Mat; Type = o.Type; Tex = o.Tex; TexPath = o.TexPath; MeshPath = o.MeshPath; Parts = o.Parts;
         Script = nullptr; return *this;
     }
     SceneObject() = default;
@@ -100,7 +108,7 @@ struct SceneObject {
         return glm::scale(t, Scale);
     }
 
- 
+
     glm::mat4 GetWorldTransform(const std::vector<SceneObject>& objs) const {
         if (ParentIndex >= 0 && ParentIndex < (int)objs.size())
             return objs[ParentIndex].GetWorldTransform(objs) * GetTransform();
@@ -216,7 +224,7 @@ public:
         BuildWireShader(); BuildBBoxMesh();
         BuildGizmoShader(); BuildArrowMesh(); BuildRingMesh(); BuildScaleHandleMesh();
 
-        m_CheckerTex = std::make_shared<Purr::Texture>(128, 128, 0xFFB97FFF);
+        m_CheckerTex = Purr::TextureManager::Create(128, 128, 0xFFB97FFF, "__checker_default");
 
         // Framebuffer
         Purr::FramebufferSpec spec;
@@ -484,140 +492,81 @@ public:
         if (m_State == EngineState::Editor)
         {
 
-        // Undo / Redo -----  Ctrl+Z/ Ctrl+Y - Raccourcis Clavier
-        if (!io.WantTextInput)
-        {
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) Undo();
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) Redo();
-            if (ImGui::IsKeyPressed(ImGuiKey_T)) m_GizmoMode = GizmoMode::Translate;
-            if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoMode = GizmoMode::Rotate;
-            if (ImGui::IsKeyPressed(ImGuiKey_S)) m_GizmoMode = GizmoMode::Scale;
-
-            // ---- Supprimer [Del] ----
-            if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !m_Selection.empty())
-                DeleteSelection();
-
-            // ---- Copier [Ctrl+C] ----
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !m_Selection.empty())
+            // Undo / Redo -----  Ctrl+Z/ Ctrl+Y - Raccourcis Clavier
+            if (!io.WantTextInput)
             {
-                m_Clipboard.clear();
-                std::vector<int> sorted(m_Selection.begin(), m_Selection.end());
-                std::sort(sorted.begin(), sorted.end());
-                for (int idx : sorted) m_Clipboard.push_back(m_Objects[idx]);
-            }
+                if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) Undo();
+                if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) Redo();
+                if (ImGui::IsKeyPressed(ImGuiKey_T)) m_GizmoMode = GizmoMode::Translate;
+                if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoMode = GizmoMode::Rotate;
+                if (ImGui::IsKeyPressed(ImGuiKey_S)) m_GizmoMode = GizmoMode::Scale;
 
-            // ---- Coller [Ctrl+V] ----
-            if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !m_Clipboard.empty())
-            {
-                SaveSnapshot();
-                m_Selection.clear();
-                for (auto obj : m_Clipboard)
+                // ---- Supprimer [Del] ----
+                if (ImGui::IsKeyPressed(ImGuiKey_Delete) && !m_Selection.empty())
+                    DeleteSelection();
+
+                // ---- Copier [Ctrl+C] ----
+                if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) && !m_Selection.empty())
                 {
-                    obj.Position += glm::vec3(0.5f, 0.0f, 0.5f);
-                    obj.Name += " (copie)";
-                    m_Objects.push_back(obj);
-                    m_Selection.insert((int)m_Objects.size() - 1);
+                    m_Clipboard.clear();
+                    std::vector<int> sorted(m_Selection.begin(), m_Selection.end());
+                    std::sort(sorted.begin(), sorted.end());
+                    for (int idx : sorted) m_Clipboard.push_back(m_Objects[idx]);
                 }
-                m_Selected = *m_Selection.begin();
-            }
-        }
 
-        // Orbite (clic droit, seulement si pas en train de dragger le gizmo)
-        if (m_ViewportHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
-            m_Camera.Orbit(io.MouseDelta.x * 0.4f, -io.MouseDelta.y * 0.4f);
-
-        // --- Gizmo input (ImGui direct, plus fiable que le systeme d'events) ---
-        if (m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_Selected >= 0 && !m_GizmoDragging)
-        {
-            ImGuiIO& io = ImGui::GetIO();
-            glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
-            glm::vec2 ndc = { mp.x / m_ViewportSize.x * 2.0f - 1.0f,
-                              1.0f - mp.y / m_ViewportSize.y * 2.0f };
-            m_ActiveAxis = HitTestGizmo(ndc);
-            m_GizmoDragging = (m_ActiveAxis != GizmoAxis::None);
-            if (m_GizmoDragging)
-            {
-                SaveSnapshot();
-                if (m_GizmoMode == GizmoMode::Rotate)
+                // ---- Coller [Ctrl+V] ----
+                if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) && !m_Clipboard.empty())
                 {
-                    // Enregistre l'angle initial souris/centre pour la rotation
-                    glm::vec3& pos = m_Objects[m_Selected].Position;
-                    glm::vec4 clip = m_Camera.GetViewProjection() * glm::vec4(pos, 1.0f);
-                    glm::vec2 center2D = { clip.x / clip.w, clip.y / clip.w };
-                    m_RotDragLastAngle = atan2f(ndc.y - center2D.y, ndc.x - center2D.x);
+                    SaveSnapshot();
+                    m_Selection.clear();
+                    for (auto obj : m_Clipboard)
+                    {
+                        obj.Position += glm::vec3(0.5f, 0.0f, 0.5f);
+                        obj.Name += " (copie)";
+                        m_Objects.push_back(obj);
+                        m_Selection.insert((int)m_Objects.size() - 1);
+                    }
+                    m_Selected = *m_Selection.begin();
                 }
             }
-        }
 
-        if (m_GizmoDragging && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && m_Selected >= 0)
-        {
-            ImGuiIO& io = ImGui::GetIO();
+            // Orbite (clic droit, seulement si pas en train de dragger le gizmo)
+            if (m_ViewportHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
+                m_Camera.Orbit(io.MouseDelta.x * 0.4f, -io.MouseDelta.y * 0.4f);
 
-            if (m_GizmoMode == GizmoMode::Translate)
+            // --- Gizmo input (ImGui direct, plus fiable que le systeme d'events) ---
+            if (m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_Selected >= 0 && !m_GizmoDragging)
             {
-                glm::vec2 delta = { io.MouseDelta.x / m_ViewportSize.x * 2.0f,
-                                   -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
-
-                glm::vec3 pos = m_Objects[m_Selected].GetWorldPosition(m_Objects);
-                glm::vec3 axisDir = (m_ActiveAxis == GizmoAxis::X) ? glm::vec3(1, 0, 0) :
-                    (m_ActiveAxis == GizmoAxis::Y) ? glm::vec3(0, 1, 0) :
-                    glm::vec3(0, 0, 1);
-
-                glm::mat4 vp = m_Camera.GetViewProjection();
-                auto proj2D = [&](glm::vec3 p) -> glm::vec2 {
-                    glm::vec4 c = vp * glm::vec4(p, 1.0f);
-                    return glm::vec2(c.x / c.w, c.y / c.w);
-                    };
-
-                glm::vec2 screenAxis = proj2D(pos + axisDir) - proj2D(pos);
-                float screenLen = glm::length(screenAxis);
-                if (screenLen > 0.0001f)
-                {
-                    float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
-                    glm::vec3 move = axisDir * t;
-                    for (int idx : m_Selection)
-                        m_Objects[idx].Position += move;
-                }
-            }
-            else if (m_GizmoMode == GizmoMode::Rotate)
-            {
-                glm::vec3& pos = m_Objects[m_Selected].Position;
-                glm::vec4 clip = m_Camera.GetViewProjection() * glm::vec4(pos, 1.0f);
-                glm::vec2 center2D = { clip.x / clip.w, clip.y / clip.w };
-
+                ImGuiIO& io = ImGui::GetIO();
                 glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
-                glm::vec2 mouseNDC = { mp.x / m_ViewportSize.x * 2.0f - 1.0f,
-                                       1.0f - mp.y / m_ViewportSize.y * 2.0f };
-                float currentAngle = atan2f(mouseNDC.y - center2D.y, mouseNDC.x - center2D.x);
-                float delta = currentAngle - m_RotDragLastAngle;
-                // Gestion wrap-around
-                if (delta > glm::pi<float>()) delta -= 2.0f * glm::pi<float>();
-                if (delta < -glm::pi<float>()) delta += 2.0f * glm::pi<float>();
-                m_RotDragLastAngle = currentAngle;
-
-                float degrees = glm::degrees(delta) * 2.0f;
-                if (m_ActiveAxis == GizmoAxis::X) m_Objects[m_Selected].Rotation.x += degrees;
-                else if (m_ActiveAxis == GizmoAxis::Y) m_Objects[m_Selected].Rotation.y += degrees;
-                else if (m_ActiveAxis == GizmoAxis::Z) m_Objects[m_Selected].Rotation.z += degrees;
-            }
-            else // Scale
-            {
-                glm::vec2 delta = { io.MouseDelta.x / m_ViewportSize.x * 2.0f,
-                                   -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
-
-                glm::vec3& scl = m_Objects[m_Selected].Scale;
-                glm::vec3& pos = m_Objects[m_Selected].Position;
-
-                if (m_ActiveAxis == GizmoAxis::All)
+                glm::vec2 ndc = { mp.x / m_ViewportSize.x * 2.0f - 1.0f,
+                                  1.0f - mp.y / m_ViewportSize.y * 2.0f };
+                m_ActiveAxis = HitTestGizmo(ndc);
+                m_GizmoDragging = (m_ActiveAxis != GizmoAxis::None);
+                if (m_GizmoDragging)
                 {
-                    // Uniform scale: mouvement horizontal total
-                    float t = delta.x * 3.0f;
-                    float factor = 1.0f + t;
-                    for (int idx : m_Selection)
-                        m_Objects[idx].Scale = glm::max(m_Objects[idx].Scale * factor, glm::vec3(0.001f));
+                    SaveSnapshot();
+                    if (m_GizmoMode == GizmoMode::Rotate)
+                    {
+                        // Enregistre l'angle initial souris/centre pour la rotation
+                        glm::vec3& pos = m_Objects[m_Selected].Position;
+                        glm::vec4 clip = m_Camera.GetViewProjection() * glm::vec4(pos, 1.0f);
+                        glm::vec2 center2D = { clip.x / clip.w, clip.y / clip.w };
+                        m_RotDragLastAngle = atan2f(ndc.y - center2D.y, ndc.x - center2D.x);
+                    }
                 }
-                else
+            }
+
+            if (m_GizmoDragging && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && m_Selected >= 0)
+            {
+                ImGuiIO& io = ImGui::GetIO();
+
+                if (m_GizmoMode == GizmoMode::Translate)
                 {
+                    glm::vec2 delta = { io.MouseDelta.x / m_ViewportSize.x * 2.0f,
+                                       -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
+
+                    glm::vec3 pos = m_Objects[m_Selected].GetWorldPosition(m_Objects);
                     glm::vec3 axisDir = (m_ActiveAxis == GizmoAxis::X) ? glm::vec3(1, 0, 0) :
                         (m_ActiveAxis == GizmoAxis::Y) ? glm::vec3(0, 1, 0) :
                         glm::vec3(0, 0, 1);
@@ -633,34 +582,93 @@ public:
                     if (screenLen > 0.0001f)
                     {
                         float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
-                        float delta_t = t * 2.0f;
-                        for (int idx : m_Selection) {
-                            if (m_ActiveAxis == GizmoAxis::X) m_Objects[idx].Scale.x = glm::max(m_Objects[idx].Scale.x + delta_t, 0.001f);
-                            else if (m_ActiveAxis == GizmoAxis::Y) m_Objects[idx].Scale.y = glm::max(m_Objects[idx].Scale.y + delta_t, 0.001f);
-                            else if (m_ActiveAxis == GizmoAxis::Z) m_Objects[idx].Scale.z = glm::max(m_Objects[idx].Scale.z + delta_t, 0.001f);
+                        glm::vec3 move = axisDir * t;
+                        for (int idx : m_Selection)
+                            m_Objects[idx].Position += move;
+                    }
+                }
+                else if (m_GizmoMode == GizmoMode::Rotate)
+                {
+                    glm::vec3& pos = m_Objects[m_Selected].Position;
+                    glm::vec4 clip = m_Camera.GetViewProjection() * glm::vec4(pos, 1.0f);
+                    glm::vec2 center2D = { clip.x / clip.w, clip.y / clip.w };
+
+                    glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
+                    glm::vec2 mouseNDC = { mp.x / m_ViewportSize.x * 2.0f - 1.0f,
+                                           1.0f - mp.y / m_ViewportSize.y * 2.0f };
+                    float currentAngle = atan2f(mouseNDC.y - center2D.y, mouseNDC.x - center2D.x);
+                    float delta = currentAngle - m_RotDragLastAngle;
+                    // Gestion wrap-around
+                    if (delta > glm::pi<float>()) delta -= 2.0f * glm::pi<float>();
+                    if (delta < -glm::pi<float>()) delta += 2.0f * glm::pi<float>();
+                    m_RotDragLastAngle = currentAngle;
+
+                    float degrees = glm::degrees(delta) * 2.0f;
+                    if (m_ActiveAxis == GizmoAxis::X) m_Objects[m_Selected].Rotation.x += degrees;
+                    else if (m_ActiveAxis == GizmoAxis::Y) m_Objects[m_Selected].Rotation.y += degrees;
+                    else if (m_ActiveAxis == GizmoAxis::Z) m_Objects[m_Selected].Rotation.z += degrees;
+                }
+                else // Scale
+                {
+                    glm::vec2 delta = { io.MouseDelta.x / m_ViewportSize.x * 2.0f,
+                                       -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
+
+                    glm::vec3& scl = m_Objects[m_Selected].Scale;
+                    glm::vec3& pos = m_Objects[m_Selected].Position;
+
+                    if (m_ActiveAxis == GizmoAxis::All)
+                    {
+                        // Uniform scale: mouvement horizontal total
+                        float t = delta.x * 3.0f;
+                        float factor = 1.0f + t;
+                        for (int idx : m_Selection)
+                            m_Objects[idx].Scale = glm::max(m_Objects[idx].Scale * factor, glm::vec3(0.001f));
+                    }
+                    else
+                    {
+                        glm::vec3 axisDir = (m_ActiveAxis == GizmoAxis::X) ? glm::vec3(1, 0, 0) :
+                            (m_ActiveAxis == GizmoAxis::Y) ? glm::vec3(0, 1, 0) :
+                            glm::vec3(0, 0, 1);
+
+                        glm::mat4 vp = m_Camera.GetViewProjection();
+                        auto proj2D = [&](glm::vec3 p) -> glm::vec2 {
+                            glm::vec4 c = vp * glm::vec4(p, 1.0f);
+                            return glm::vec2(c.x / c.w, c.y / c.w);
+                            };
+
+                        glm::vec2 screenAxis = proj2D(pos + axisDir) - proj2D(pos);
+                        float screenLen = glm::length(screenAxis);
+                        if (screenLen > 0.0001f)
+                        {
+                            float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
+                            float delta_t = t * 2.0f;
+                            for (int idx : m_Selection) {
+                                if (m_ActiveAxis == GizmoAxis::X) m_Objects[idx].Scale.x = glm::max(m_Objects[idx].Scale.x + delta_t, 0.001f);
+                                else if (m_ActiveAxis == GizmoAxis::Y) m_Objects[idx].Scale.y = glm::max(m_Objects[idx].Scale.y + delta_t, 0.001f);
+                                else if (m_ActiveAxis == GizmoAxis::Z) m_Objects[idx].Scale.z = glm::max(m_Objects[idx].Scale.z + delta_t, 0.001f);
+                            }
                         }
                     }
                 }
             }
-        }
 
-        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
-        {
-            m_GizmoDragging = false;
-            m_ActiveAxis = GizmoAxis::None;
-        }
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            {
+                m_GizmoDragging = false;
+                m_ActiveAxis = GizmoAxis::None;
+            }
 
-        // Hover highlight
-        if (!m_GizmoDragging && m_ViewportHovered && m_Selected >= 0)
-        {
-            ImGuiIO& io = ImGui::GetIO();
-            glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
-            glm::vec2 ndc = { mp.x / m_ViewportSize.x * 2.0f - 1.0f,
-                              1.0f - mp.y / m_ViewportSize.y * 2.0f };
-            m_HoveredAxis = HitTestGizmo(ndc);
-        }
-        else if (!m_ViewportHovered && !m_GizmoDragging)
-            m_HoveredAxis = GizmoAxis::None;
+            // Hover highlight
+            if (!m_GizmoDragging && m_ViewportHovered && m_Selected >= 0)
+            {
+                ImGuiIO& io = ImGui::GetIO();
+                glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
+                glm::vec2 ndc = { mp.x / m_ViewportSize.x * 2.0f - 1.0f,
+                                  1.0f - mp.y / m_ViewportSize.y * 2.0f };
+                m_HoveredAxis = HitTestGizmo(ndc);
+            }
+            else if (!m_ViewportHovered && !m_GizmoDragging)
+                m_HoveredAxis = GizmoAxis::None;
 
 
         } // fin du mode Editor *_*
@@ -711,34 +719,44 @@ public:
             auto va = GetMeshForObject(obj);
             if (!va) continue;  // mesh pas encore chargé ou fichier invalide
 
+            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex) {
+                if (tex) {
+                    m_TexShader->Bind();
+                    uploadLights(m_TexShader);
+                    m_TexShader->SetMat4("u_Model", model);
+                    m_TexShader->SetMat4("u_NormalMat", normalMat);
+                    m_TexShader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
+                    m_TexShader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                    m_TexShader->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                    m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
+                    m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    m_TexShader->SetInt("u_Texture", 0);
+                    tex->Bind(0);
+                    Purr::RenderCommand::DrawIndexed(mesh);
+                }
+                else {
+                    m_Shader->Bind();
+                    uploadLights(m_Shader);
+                    m_Shader->SetMat4("u_Model", model);
+                    m_Shader->SetMat4("u_NormalMat", normalMat);
+                    m_Shader->SetFloat3("u_MatAmbient", obj.Mat.Ambient);
+                    m_Shader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
+                    m_Shader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                    m_Shader->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                    m_Shader->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    Purr::RenderCommand::DrawIndexed(mesh);
+                }
+            };
 
-            if (obj.Tex) {
-                m_TexShader->Bind();
-                uploadLights(m_TexShader);
-                m_TexShader->SetMat4("u_Model", model);
-                m_TexShader->SetMat4("u_NormalMat", normalMat);
-                m_TexShader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
-                m_TexShader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
-                m_TexShader->SetFloat("u_MatShininess", obj.Mat.Shininess);
-                m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
-                m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
-                m_TexShader->SetInt("u_Texture", 0);
-                obj.Tex->Bind(0);
-                Purr::RenderCommand::DrawIndexed(va);
-                //GetMeshForObject(obj);
+            if (obj.Type == PrimitiveType::Custom && !obj.Parts.empty()) {
+                for (auto& part : obj.Parts) {
+                    if (!part.Mesh)
+                        continue;
+                    drawMeshWithMaterial(part.Mesh, part.Texture ? part.Texture : obj.Tex);
+                }
             }
             else {
-                m_Shader->Bind();
-                uploadLights(m_Shader);
-                m_Shader->SetMat4("u_Model", model);
-                m_Shader->SetMat4("u_NormalMat", normalMat);
-                m_Shader->SetFloat3("u_MatAmbient", obj.Mat.Ambient);
-                m_Shader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
-                m_Shader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
-                m_Shader->SetFloat("u_MatShininess", obj.Mat.Shininess);
-                m_Shader->SetInt("u_IllumModel", (int)obj.Mat.Model);
-                Purr::RenderCommand::DrawIndexed(va);
-                //GetMeshForObject(obj);
+                drawMeshWithMaterial(va, obj.Tex);
             }
         }
 
@@ -913,7 +931,7 @@ public:
         // Capturer la position du contenu du viewport (pour le hit-test gizmo)
         ImVec2 contentPos = ImGui::GetCursorScreenPos();
         m_ViewportPos = { contentPos.x, contentPos.y };
-        
+
 
         ImGui::SetCursorScreenPos(contentPos);
         ImVec2 size = ImGui::GetContentRegionAvail();
@@ -985,7 +1003,7 @@ public:
         ImGui::Text("Objets (%zu)", m_Objects.size());
 
 
-   
+
 
         // ---- Scene list (hiérarchique) ----
         for (int i = 0; i < (int)m_Objects.size(); i++)
@@ -1102,7 +1120,7 @@ public:
                 Purr::LoadOBJ(p, texPath);
                 if (!texPath.empty()) {
                     obj.TexPath = texPath;
-                    obj.Tex = std::make_shared<Purr::Texture>(texPath);
+                    obj.Tex = Purr::TextureManager::Load(texPath);
                 }
 
                 SaveSnapshot();
@@ -1206,7 +1224,7 @@ public:
             if (ImGui::Button("Charger texture...")) {
                 //std::string path = OpenFileDialog();
                 std::string path = OpenFileDialog("Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tga\0All Files\0*.*\0");
-                if (!path.empty()) { obj.Tex = std::make_shared<Purr::Texture>(path); obj.TexPath = path; }
+                if (!path.empty()) { obj.Tex = Purr::TextureManager::Load(path); obj.TexPath = path; }
             }
             if (obj.Tex) { ImGui::SameLine(); if (ImGui::Button("Retirer")) { obj.Tex = nullptr; obj.TexPath = ""; } }
             ImGui::Separator();
@@ -1273,7 +1291,7 @@ public:
 
 
 
-         
+
             // ---- Script -----------------------------------------------
             if (m_Selected >= 0 && m_Selected < (int)m_Objects.size()
                 && m_Objects[m_Selected].Script)
@@ -1407,6 +1425,7 @@ public:
 
         m_Objects.clear();
         m_MeshCache.clear();
+        m_ObjMultiMeshCache.clear();
         m_Selected = m_Objects.empty() ? -1 : 0;
 
         for (auto& o : j["objects"])
@@ -1424,7 +1443,7 @@ public:
             obj.Mat.Shininess = o["shininess"];
             obj.Mat.Model = (IlluminationModel)(int)o["illum"];
             if (!obj.TexPath.empty())
-                obj.Tex = std::make_shared<Purr::Texture>(obj.TexPath);
+                obj.Tex = Purr::TextureManager::Load(obj.TexPath);
             m_Objects.push_back(obj);
         }
 
@@ -1437,19 +1456,89 @@ public:
     }
 
 private:
+    struct CachedObjPart {
+        std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
+        std::string TexPath;
+    };
 
     std::shared_ptr<Purr::VertexArray> GetMeshForObject(SceneObject& obj)
     {
         if (obj.Type == PrimitiveType::Custom) {
+            if (!obj.Parts.empty())
+                return obj.Parts.front().Mesh;
+
+            auto multiIt = m_ObjMultiMeshCache.find(obj.MeshPath);
+            if (multiIt != m_ObjMultiMeshCache.end()) {
+                obj.Parts.clear();
+                for (const auto& cachedPart : multiIt->second) {
+                    SceneObject::RenderPart part;
+                    part.Mesh = cachedPart.Mesh;
+                    part.TexturePath = cachedPart.TexPath;
+                    if (!part.TexturePath.empty())
+                        part.Texture = Purr::TextureManager::Load(part.TexturePath);
+                    obj.Parts.push_back(part);
+                }
+
+                if (!obj.Tex) {
+                    for (auto& part : obj.Parts) {
+                        if (part.Texture) {
+                            obj.Tex = part.Texture;
+                            obj.TexPath = part.TexturePath;
+                            break;
+                        }
+                    }
+                }
+
+                if (!obj.Parts.empty())
+                    return obj.Parts.front().Mesh;
+            }
+
             auto it = m_MeshCache.find(obj.MeshPath);
             if (it != m_MeshCache.end()) {
                 // Cache hit — assigner la texture quand même si manquante
                 if (!obj.Tex) {
                     auto texIt = m_ObjTexCache.find(obj.MeshPath);
                     if (texIt != m_ObjTexCache.end() && !texIt->second.empty())
-                        obj.Tex = std::make_shared<Purr::Texture>(texIt->second);
+                        obj.Tex = Purr::TextureManager::Load(texIt->second);
                 }
                 return it->second;
+            }
+
+            std::vector<Purr::ObjSubmesh> submeshes;
+            std::string firstTexPath;
+            if (Purr::LoadOBJMulti(obj.MeshPath, submeshes, firstTexPath) && !submeshes.empty()) {
+                std::vector<CachedObjPart> cachedParts;
+                cachedParts.reserve(submeshes.size());
+                obj.Parts.clear();
+
+                for (const auto& sm : submeshes) {
+                    if (!sm.Mesh)
+                        continue;
+
+                    CachedObjPart cachePart;
+                    cachePart.Mesh = sm.Mesh;
+                    cachePart.TexPath = sm.TexturePath;
+                    cachedParts.push_back(cachePart);
+
+                    SceneObject::RenderPart part;
+                    part.Mesh = sm.Mesh;
+                    part.TexturePath = sm.TexturePath;
+                    if (!part.TexturePath.empty())
+                        part.Texture = Purr::TextureManager::Load(part.TexturePath);
+                    obj.Parts.push_back(part);
+                }
+
+                if (!cachedParts.empty()) {
+                    m_ObjMultiMeshCache[obj.MeshPath] = cachedParts;
+                    m_MeshCache[obj.MeshPath] = cachedParts.front().Mesh;
+                    m_ObjTexCache[obj.MeshPath] = firstTexPath;
+
+                    if (!firstTexPath.empty() && !obj.Tex) {
+                        obj.TexPath = firstTexPath;
+                        obj.Tex = Purr::TextureManager::Load(firstTexPath);
+                    }
+                    return cachedParts.front().Mesh;
+                }
             }
 
             std::string texPath;
@@ -1458,7 +1547,7 @@ private:
                 m_MeshCache[obj.MeshPath] = va;
                 m_ObjTexCache[obj.MeshPath] = texPath;   // ← stocker le texPath aussi
                 if (!texPath.empty() && !obj.Tex)
-                    obj.Tex = std::make_shared<Purr::Texture>(texPath);
+                    obj.Tex = Purr::TextureManager::Load(texPath);
             }
             return va;
         }
@@ -2103,7 +2192,8 @@ private:
 
     // Cache de mesh
     std::unordered_map<std::string, std::shared_ptr<Purr::VertexArray>> m_MeshCache;
-   
+    std::unordered_map<std::string, std::vector<CachedObjPart>>         m_ObjMultiMeshCache;
+
     std::unordered_map<std::string, std::string>                        m_ObjTexCache;
 
     // Play mode

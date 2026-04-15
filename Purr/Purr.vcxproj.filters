@@ -123,6 +123,9 @@
     <ClInclude Include="src\Purr\Renderer\Texture.h">
       <Filter>src\Purr\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="src\Purr\Renderer\TextureManager.h">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClInclude>
     <ClInclude Include="src\Purr\Renderer\VertexArray.h">
       <Filter>src\Purr\Renderer</Filter>
     </ClInclude>
@@ -1440,6 +1443,9 @@
       <Filter>src\Purr\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\Renderer\Texture.cpp">
+      <Filter>src\Purr\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\Renderer\TextureManager.cpp">
       <Filter>src\Purr\Renderer</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\Renderer\VertexArray.cpp">
