@@ -216,6 +216,14 @@ enum class GizmoMode { Translate, Rotate, Scale };
 // -----------------------------------------------------------------------
 class ExampleLayer : public Purr::Layer {
 public:
+    struct MapPreset {
+        const char* Label = "";
+        const char* MeshPath = "";
+        glm::vec3 MapPosition = { 0.0f, 0.0f, 0.0f };
+        glm::vec3 MapScale = { 1.0f, 1.0f, 1.0f };
+        glm::vec3 PlayerSpawn = { 0.0f, 0.0f, 0.0f }; // utilisé à l'étape gameplay
+    };
+
     // Constructeur
     ExampleLayer() : Layer("Example"), m_Camera(60.0f, 1280.0f / 720.0f)
     {
@@ -1132,6 +1140,28 @@ public:
             }
         }
 
+        ImGui::Separator();
+        ImGui::Text("Maps (presets)");
+        ImGui::TextDisabled("Charge une map Roblox preconfiguree.");
+        if (m_State == EngineState::Playing) ImGui::BeginDisabled();
+
+        const MapPreset mapPresets[] = {
+            { "MM2", "assets/models/roblox/mm2/mm2map1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 0.5f, 0.0f} },
+            { "Island", "assets/models/roblox/island/island1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 0.5f, 0.0f} },
+            { "Doomspires", "assets/models/roblox/doomspires/doomspires1Tex.obj", {0.0f, 0.0f, 0.0f}, {18.0f, 18.0f, 18.0f}, {0.0f, 0.5f, 0.0f} },
+        };
+
+        for (const auto& preset : mapPresets) {
+            if (ImGui::Button(preset.Label, ImVec2(120.0f, 0.0f)))
+                LoadMapPreset(preset);
+            ImGui::SameLine();
+        }
+        ImGui::NewLine();
+        if (!m_CurrentMapName.empty())
+            ImGui::TextColored({ 0.6f, 1.0f, 0.6f, 1.0f }, "Map chargee : %s", m_CurrentMapName.c_str());
+
+        if (m_State == EngineState::Playing) ImGui::EndDisabled();
+
 
         // ---- Histogramme --------------------------------------------------
         ImGui::Separator();
@@ -1456,6 +1486,40 @@ public:
             if (obj.Type == PrimitiveType::Plane && obj.TexPath.empty())
                 obj.Tex = m_CheckerTex;
         }
+    }
+
+    void LoadMapPreset(const MapPreset& preset)
+    {
+        SaveSnapshot();
+
+        m_Objects.clear();
+        m_MeshCache.clear();
+        m_ObjMultiMeshCache.clear();
+        m_ObjTexCache.clear();
+
+        SceneObject map;
+        map.Name = std::string("Map - ") + preset.Label;
+        map.Type = PrimitiveType::Custom;
+        map.MeshPath = preset.MeshPath;
+        map.Position = preset.MapPosition;
+        map.Scale = preset.MapScale;
+        map.Mat.Diffuse = { 1.0f, 1.0f, 1.0f };
+        map.Mat.Model = IlluminationModel::Phong;
+
+        std::string texPath;
+        Purr::LoadOBJ(preset.MeshPath, texPath);
+        if (!texPath.empty()) {
+            map.TexPath = texPath;
+            map.Tex = Purr::TextureManager::Load(texPath);
+        }
+
+        m_Objects.push_back(map);
+        m_Selection.clear();
+        m_Selected = 0;
+        m_Selection.insert(0);
+
+        m_CurrentMapName = preset.Label;
+        m_CurrentMapSpawn = preset.PlayerSpawn;
     }
 
 private:
@@ -2202,6 +2266,8 @@ private:
     std::unordered_map<std::string, std::vector<CachedObjPart>>         m_ObjMultiMeshCache;
 
     std::unordered_map<std::string, std::string>                        m_ObjTexCache;
+    std::string                                                         m_CurrentMapName;
+    glm::vec3                                                           m_CurrentMapSpawn = { 0.0f, 0.0f, 0.0f };
 
     // Play mode
     enum class EngineState { Editor, Playing };

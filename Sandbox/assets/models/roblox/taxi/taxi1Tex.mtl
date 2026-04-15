@@ -1,0 +1,284 @@
+newmtl MesheswhelwheelFront0021Mtl
+Material Color
+Ka 0.940601 0.940601 0.940601
+Kd 0.940601 0.940601 0.940601
+Ks 0.372552 0.372552 0.372552 
+
+d 1
+
+Ns 0
+
+map_Ka MesheswhelwheelFront0021_diff.png
+map_Kd MesheswhelwheelFront0021_diff.png
+map_d MesheswhelwheelFront0021_diff.png
+
+map_Bump MesheswhelwheelFront0021_nmap.png
+
+rbx_doublesided 1
+
+newmtl MesheswhelwheelFront0011Mtl
+Material Color
+Ka 0.00258583 0.00258583 0.00258583
+Kd 0.00258583 0.00258583 0.00258583
+Ks 0.000111545 0.000111545 0.000111545 
+
+d 1
+
+Ns 0
+
+map_Ka MesheswhelwheelFront0011_diff.png
+map_Kd MesheswhelwheelFront0011_diff.png
+map_d MesheswhelwheelFront0011_diff.png
+
+map_Bump MesheswhelwheelFront0011_nmap.png
+
+map_Ns MesheswhelwheelFront0011_spec.png
+
+rbx_doublesided 1
+
+newmtl MeshesezcarrearSeat1Mtl
+Material Color
+Ka 0.0915184 0.0511221 0.0328759
+Kd 0.0915184 0.0511221 0.0328759
+Ks 0.00574233 0.00320766 0.0020628 
+
+d 1
+
+Ns 0
+
+map_Ka MesheswhelwheelFront0021_diff.png
+map_Kd MesheswhelwheelFront0021_diff.png
+map_d MesheswhelwheelFront0021_diff.png
+
+map_Bump MesheswhelwheelFront0021_nmap.png
+
+rbx_doublesided 1
+
+newmtl MesheswhelwheelFront1Mtl
+Material Color
+Ka 0.00258583 0.00258583 0.00258583
+Kd 0.00258583 0.00258583 0.00258583
+Ks 0.00102419 0.00102419 0.00102419 
+
+d 1
+
+Ns 0
+
+map_Ka MesheswhelwheelFront0021_diff.png
+map_Kd MesheswhelwheelFront0021_diff.png
+map_d MesheswhelwheelFront0021_diff.png
+
+map_Bump MesheswhelwheelFront0021_nmap.png
+
+rbx_doublesided 1
+
+newmtl Meshesezezezezezcarroof1Mtl
+Material Color
+Ka 0.212044 0.139022 0.0461488
+Kd 0.212044 0.139022 0.0461488
+Ks 0.0133047 0.00872298 0.00289561 
+
+d 1
+
+Ns 0
+
+map_Ka MesheswhelwheelFront0021_diff.png
+map_Kd MesheswhelwheelFront0021_diff.png
+map_d MesheswhelwheelFront0021_diff.png
+
+map_Bump MesheswhelwheelFront0021_nmap.png
+
+newmtl MeshesezcardoorRearR1Mtl
+Material Color
+Ka 0.0915184 0.0134734 0.0134734
+Kd 0.0915184 0.0134734 0.0134734
+Ks 0.00394785 0.000581205 0.000581205 
+
+d 1
+
+Ns 0
+
+map_Ka MesheswhelwheelFront0011_diff.png
+map_Kd MesheswhelwheelFront0011_diff.png
+map_d MesheswhelwheelFront0011_diff.png
+
+map_Bump MesheswhelwheelFront0011_nmap.png
+
+map_Ns MesheswhelwheelFront0011_spec.png
+
+newmtl MeshesezcarrearSeat2Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 0.803922
+
+Ns 0
+
+map_Ka MeshesezcarrearSeat2_diff.png
+map_Kd MeshesezcarrearSeat2_diff.png
+map_d MeshesezcarrearSeat2_diff.png
+
+rbx_doublesided 1
+
+newmtl MeshesezcarchassisHipoly1Mtl
+Material Color
+Ka 0.00715504 0.018913 0.0315514
+Kd 0.00715504 0.018913 0.0315514
+Ks 0.000308649 0.000815854 0.00136104 
+
+d 1
+
+Ns 0
+
+map_Ka MesheswhelwheelFront0011_diff.png
+map_Kd MesheswhelwheelFront0011_diff.png
+map_d MesheswhelwheelFront0011_diff.png
+
+map_Bump MesheswhelwheelFront0011_nmap.png
+
+map_Ns MesheswhelwheelFront0011_spec.png
+
+newmtl Meshesezezezezezcarroof2Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 0.803922
+
+Ns 0
+
+map_Ka MeshesezcarrearSeat2_diff.png
+map_Kd MeshesezcarrearSeat2_diff.png
+map_d MeshesezcarrearSeat2_diff.png
+
+newmtl MeshesezcarrearAxle1Mtl
+Material Color
+Ka 0.00258583 0.00258583 0.00258583
+Kd 0.00258583 0.00258583 0.00258583
+Ks 0.00172388 0.00172388 0.00172388 
+
+d 1
+
+Ns 255
+
+map_Ka MeshesezcarrearAxle1_diff.png
+map_Kd MeshesezcarrearAxle1_diff.png
+map_d MeshesezcarrearAxle1_diff.png
+
+map_Bump MeshesezcarrearAxle1_nmap.png
+
+map_Ns MeshesezcarrearAxle1_spec.png
+
+newmtl Part1Mtl
+Material Color
+Ka 1 0.851252 0.487765
+Kd 1 0.851252 0.487765
+Ks 0.666667 0.567501 0.325177 
+
+d 1
+
+Ns 255
+
+map_Ka MeshesezcarrearAxle1_diff.png
+map_Kd MeshesezcarrearAxle1_diff.png
+map_d MeshesezcarrearAxle1_diff.png
+
+map_Bump MeshesezcarrearAxle1_nmap.png
+
+map_Ns MeshesezcarrearAxle1_spec.png
+
+newmtl Meshesfordlogo0011Mtl
+Material Color
+Ka 0.353741 0.363604 0.420508
+Kd 0.353741 0.363604 0.420508
+Ks 0.235827 0.242403 0.280339 
+
+d 1
+
+Ns 255
+
+map_Ka MeshesezcarrearAxle1_diff.png
+map_Kd MeshesezcarrearAxle1_diff.png
+map_d MeshesezcarrearAxle1_diff.png
+
+map_Bump MeshesezcarrearAxle1_nmap.png
+
+map_Ns MeshesezcarrearAxle1_spec.png
+
+rbx_doublesided 1
+
+newmtl Meshpart1Mtl
+Material Color
+Ka 0.124741 0.113921 0.121986
+Kd 0.124741 0.113921 0.121986
+Ks 0.0831606 0.0759473 0.0813238 
+
+d 1
+
+Ns 255
+
+map_Ka MeshesezcarrearAxle1_diff.png
+map_Kd MeshesezcarrearAxle1_diff.png
+map_d MeshesezcarrearAxle1_diff.png
+
+map_Bump MeshesezcarrearAxle1_nmap.png
+
+map_Ns MeshesezcarrearAxle1_spec.png
+
+newmtl Meshesfordmotor0051Mtl
+Material Color
+Ka 0.579547 0.420508 0.190463
+Kd 0.579547 0.420508 0.190463
+Ks 0.386364 0.280339 0.126975 
+
+d 1
+
+Ns 255
+
+map_Ka MeshesezcarrearAxle1_diff.png
+map_Kd MeshesezcarrearAxle1_diff.png
+map_d MeshesezcarrearAxle1_diff.png
+
+map_Bump MeshesezcarrearAxle1_nmap.png
+
+map_Ns MeshesezcarrearAxle1_spec.png
+
+newmtl Part2Mtl
+Material Color
+Ka 0.00715504 0.018913 0.0315514
+Kd 0.00715504 0.018913 0.0315514
+Ks 0.00477002 0.0126087 0.0210343 
+
+d 1
+
+Ns 255
+
+map_Ka MeshesezcarrearAxle1_diff.png
+map_Kd MeshesezcarrearAxle1_diff.png
+map_d MeshesezcarrearAxle1_diff.png
+
+map_Bump MeshesezcarrearAxle1_nmap.png
+
+map_Ns MeshesezcarrearAxle1_spec.png
+
+newmtl Meshpart2Mtl
+Material Color
+Ka 0.101145 0.0697271 0.0511221
+Kd 0.101145 0.0697271 0.0511221
+Ks 0.00555307 0.00382815 0.0028067 
+
+d 1
+
+Ns 0
+
+map_Ka Meshpart2_diff.png
+map_Kd Meshpart2_diff.png
+map_d Meshpart2_diff.png
+
+map_Bump Meshpart2_nmap.png
+
+map_Ns Meshpart2_spec.png
+

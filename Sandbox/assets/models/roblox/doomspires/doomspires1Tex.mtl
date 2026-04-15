@@ -1,0 +1,174 @@
+newmtl Holder1Mtl
+Material Color
+Ka 0.891262 0.899384 0.899384
+Kd 0.891262 0.899384 0.899384
+Ks 0.0559223 0.056432 0.056432 
+
+d 1
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
+newmtl Window1Mtl
+Material Color
+Ka 0.560499 0.0169881 0.00775103
+Kd 0.560499 0.0169881 0.00775103
+Ks 0.0351686 0.00106592 0.000486339 
+
+d 0.501961
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
+newmtl Spawnlocation1Mtl
+Material Color
+Ka 0.560499 0.0169881 0.00775103
+Kd 0.560499 0.0169881 0.00775103
+Ks 0.0351686 0.00106592 0.000486339 
+
+d 1
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
+newmtl Spawnlocation2Mtl
+Material Color
+Ka 1 1 1
+Kd 1 1 1
+Ks 0.0627451 0.0627451 0.0627451 
+
+d 1
+
+Ns 0
+
+map_Ka Spawnlocation2_diff.png
+map_Kd Spawnlocation2_diff.png
+map_d Spawnlocation2_diff.png
+
+newmtl Window121Mtl
+Material Color
+Ka 0.00143313 0.14198 0.420508
+Kd 0.00143313 0.14198 0.420508
+Ks 8.99222e-05 0.00890857 0.0263848 
+
+d 0.501961
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
+newmtl SmoothBlockModel1Mtl
+Material Color
+Ka 0.373615 0.368591 0.383775
+Kd 0.373615 0.368591 0.383775
+Ks 0.0234425 0.0231273 0.02408 
+
+d 1
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
+newmtl Spawnlocation23Mtl
+Material Color
+Ka 0.91575 0.618686 0.0253713
+Kd 0.91575 0.618686 0.0253713
+Ks 0.0574588 0.0388195 0.00159192 
+
+d 1
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
+newmtl Window41Mtl
+Material Color
+Ka 0.91575 0.618686 0.0253713
+Kd 0.91575 0.618686 0.0253713
+Ks 0.0574588 0.0388195 0.00159192 
+
+d 0.501961
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
+newmtl Spawnlocation45Mtl
+Material Color
+Ka 0.0677246 0.315763 0.0677246
+Kd 0.0677246 0.315763 0.0677246
+Ks 0.00424939 0.0198126 0.00424939 
+
+d 1
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
+newmtl Window81Mtl
+Material Color
+Ka 0.0677246 0.315763 0.0677246
+Kd 0.0677246 0.315763 0.0677246
+Ks 0.00424939 0.0198126 0.00424939 
+
+d 0.501961
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
+newmtl Spawnlocation67Mtl
+Material Color
+Ka 0.00143313 0.14198 0.420508
+Kd 0.00143313 0.14198 0.420508
+Ks 8.99222e-05 0.00890857 0.0263848 
+
+d 1
+
+Ns 0
+
+map_Ka Holder1_diff.png
+map_Kd Holder1_diff.png
+map_d Holder1_diff.png
+
+map_Bump Holder1_nmap.png
+
