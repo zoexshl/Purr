@@ -14,9 +14,15 @@
 #include <cctype>
 
 namespace Purr {
+    struct MtlMaterialInfo {
+        std::string TexturePath;
+        glm::vec3 DiffuseTint = glm::vec3(1.0f);
+    };
+
     struct ObjBuildSubmesh {
         std::string MaterialName;
         std::string TexturePath;
+        glm::vec3 DiffuseTint = glm::vec3(1.0f);
         std::vector<ObjVertex> Vertices;
         std::vector<uint32_t> Indices;
     };
@@ -107,9 +113,9 @@ namespace Purr {
         return "";
     }
 
-    static std::unordered_map<std::string, std::string> LoadMtlDiffuseMaps(const std::string& objPath)
+    static std::unordered_map<std::string, MtlMaterialInfo> LoadMtlMaterialInfos(const std::string& objPath)
     {
-        std::unordered_map<std::string, std::string> maps;
+        std::unordered_map<std::string, MtlMaterialInfo> maps;
         std::ifstream obj(objPath);
         if (!obj.is_open())
             return maps;
@@ -144,13 +150,34 @@ namespace Purr {
                 std::string token;
                 ss >> token;
                 ss >> currentMaterial;
+                if (!currentMaterial.empty())
+                    maps[currentMaterial] = MtlMaterialInfo{};
                 continue;
             }
 
             if (trimmed.rfind("map_Kd", 0) == 0 && !currentMaterial.empty()) {
                 std::string texName = ParseMapKdPath(trimmed);
                 if (!texName.empty())
-                    maps[currentMaterial] = ResolvePath(dir, texName);
+                    maps[currentMaterial].TexturePath = ResolvePath(dir, texName);
+                continue;
+            }
+
+            // Certains exports Roblox ont seulement map_Ka.
+            if (trimmed.rfind("map_Ka", 0) == 0 && !currentMaterial.empty()) {
+                if (!maps[currentMaterial].TexturePath.empty())
+                    continue; // map_Kd déjà trouvée, on garde la priorité au diffuse.
+                std::string texName = ParseMapKdPath(trimmed);
+                if (!texName.empty())
+                    maps[currentMaterial].TexturePath = ResolvePath(dir, texName);
+                continue;
+            }
+
+            if (trimmed.rfind("Kd", 0) == 0 && !currentMaterial.empty()) {
+                std::istringstream ss(trimmed);
+                std::string token;
+                float r = 1.0f, g = 1.0f, b = 1.0f;
+                ss >> token >> r >> g >> b;
+                maps[currentMaterial].DiffuseTint = glm::vec3(r, g, b);
             }
         }
 
@@ -199,7 +226,7 @@ namespace Purr {
 
         std::vector<glm::vec3> positions, normals;
         std::vector<glm::vec2> texcoords;
-        std::unordered_map<std::string, std::string> materialTextures = LoadMtlDiffuseMaps(path);
+        std::unordered_map<std::string, MtlMaterialInfo> materialInfos = LoadMtlMaterialInfos(path);
 
         std::vector<ObjBuildSubmesh> buildSubmeshes;
         std::unordered_map<std::string, size_t> submeshByMaterial;
@@ -211,9 +238,11 @@ namespace Purr {
 
             ObjBuildSubmesh sm;
             sm.MaterialName = materialName;
-            auto texIt = materialTextures.find(materialName);
-            if (texIt != materialTextures.end())
-                sm.TexturePath = texIt->second;
+            auto matIt = materialInfos.find(materialName);
+            if (matIt != materialInfos.end()) {
+                sm.TexturePath = matIt->second.TexturePath;
+                sm.DiffuseTint = matIt->second.DiffuseTint;
+            }
             buildSubmeshes.push_back(sm);
             submeshByMaterial[materialName] = buildSubmeshes.size() - 1;
             return buildSubmeshes.back();
@@ -323,6 +352,7 @@ namespace Purr {
             out.Mesh = va;
             out.TexturePath = sm.TexturePath;
             out.MaterialName = sm.MaterialName;
+            out.DiffuseTint = sm.DiffuseTint;
             outSubmeshes.push_back(out);
 
             if (outFirstTexPath.empty() && !sm.TexturePath.empty())

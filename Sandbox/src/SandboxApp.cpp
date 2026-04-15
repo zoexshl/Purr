@@ -72,6 +72,7 @@ struct SceneObject {
         std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
         std::shared_ptr<Purr::Texture> Texture = nullptr;
         std::string TexturePath;
+        glm::vec3 DiffuseTint = glm::vec3(1.0f);
     };
 
     std::string Name;
@@ -719,13 +720,14 @@ public:
             auto va = GetMeshForObject(obj);
             if (!va) continue;  // mesh pas encore chargé ou fichier invalide
 
-            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex) {
+            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint) {
+                glm::vec3 finalDiffuse = obj.Mat.Diffuse * diffuseTint;
                 if (tex) {
                     m_TexShader->Bind();
                     uploadLights(m_TexShader);
                     m_TexShader->SetMat4("u_Model", model);
                     m_TexShader->SetMat4("u_NormalMat", normalMat);
-                    m_TexShader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
+                    m_TexShader->SetFloat3("u_MatDiffuse", finalDiffuse);
                     m_TexShader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
                     m_TexShader->SetFloat("u_MatShininess", obj.Mat.Shininess);
                     m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
@@ -740,7 +742,7 @@ public:
                     m_Shader->SetMat4("u_Model", model);
                     m_Shader->SetMat4("u_NormalMat", normalMat);
                     m_Shader->SetFloat3("u_MatAmbient", obj.Mat.Ambient);
-                    m_Shader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
+                    m_Shader->SetFloat3("u_MatDiffuse", finalDiffuse);
                     m_Shader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
                     m_Shader->SetFloat("u_MatShininess", obj.Mat.Shininess);
                     m_Shader->SetInt("u_IllumModel", (int)obj.Mat.Model);
@@ -752,11 +754,12 @@ public:
                 for (auto& part : obj.Parts) {
                     if (!part.Mesh)
                         continue;
-                    drawMeshWithMaterial(part.Mesh, part.Texture ? part.Texture : obj.Tex);
+                    // Ne pas forcer une texture fallback d'un autre matériau.
+                    drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint);
                 }
             }
             else {
-                drawMeshWithMaterial(va, obj.Tex);
+                drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f));
             }
         }
 
@@ -1459,6 +1462,7 @@ private:
     struct CachedObjPart {
         std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
         std::string TexPath;
+        glm::vec3 DiffuseTint = glm::vec3(1.0f);
     };
 
     std::shared_ptr<Purr::VertexArray> GetMeshForObject(SceneObject& obj)
@@ -1474,6 +1478,7 @@ private:
                     SceneObject::RenderPart part;
                     part.Mesh = cachedPart.Mesh;
                     part.TexturePath = cachedPart.TexPath;
+                    part.DiffuseTint = cachedPart.DiffuseTint;
                     if (!part.TexturePath.empty())
                         part.Texture = Purr::TextureManager::Load(part.TexturePath);
                     obj.Parts.push_back(part);
@@ -1518,11 +1523,13 @@ private:
                     CachedObjPart cachePart;
                     cachePart.Mesh = sm.Mesh;
                     cachePart.TexPath = sm.TexturePath;
+                    cachePart.DiffuseTint = sm.DiffuseTint;
                     cachedParts.push_back(cachePart);
 
                     SceneObject::RenderPart part;
                     part.Mesh = sm.Mesh;
                     part.TexturePath = sm.TexturePath;
+                    part.DiffuseTint = sm.DiffuseTint;
                     if (!part.TexturePath.empty())
                         part.Texture = Purr::TextureManager::Load(part.TexturePath);
                     obj.Parts.push_back(part);
