@@ -241,6 +241,30 @@ public:
         BuildGizmoShader(); BuildArrowMesh(); BuildRingMesh(); BuildScaleHandleMesh();
 
         m_CheckerTex = Purr::TextureManager::Create(128, 128, 0xFFB97FFF, "__checker_default");
+        static const char* const kPlayLogoPaths[] = {
+            "assets/ui/Play_Purr.png",
+            "assets/ui/Purr_Play.png",
+        };
+        m_PlayButtonTex = nullptr;
+        for (const char* playLogoPath : kPlayLogoPaths) {
+            auto t = Purr::TextureManager::Load(playLogoPath);
+            if (t && t->IsValid()) {
+                m_PlayButtonTex = t;
+                break;
+            }
+        }
+        static const char* const kStopLogoPaths[] = {
+            "assets/ui/Stop_Purr.png",
+            "assets/ui/Purr_Stop.png",
+        };
+        m_StopButtonTex = nullptr;
+        for (const char* stopLogoPath : kStopLogoPaths) {
+            auto t = Purr::TextureManager::Load(stopLogoPath);
+            if (t && t->IsValid()) {
+                m_StopButtonTex = t;
+                break;
+            }
+        }
 
         // Framebuffer
         Purr::FramebufferSpec spec;
@@ -524,7 +548,7 @@ public:
                     if (bmin.x > bmax.x) std::swap(bmin.x, bmax.x);
                     if (bmin.y > bmax.y) std::swap(bmin.y, bmax.y);
                     if (bmin.z > bmax.z) std::swap(bmin.z, bmax.z);
-                    m_PlayStaticColliders.push_back({ bmin, bmax });
+                    m_PlayStaticColliders.push_back({ bmin, bmax, true });
                 }
                 continue;
             }
@@ -553,7 +577,11 @@ public:
                 if (bmin.x >= bmax.x || bmin.y >= bmax.y || bmin.z >= bmax.z)
                     continue;
 
-                m_PlayStaticColliders.push_back({ bmin, bmax });
+                glm::vec3 sizeAfterShrink = bmax - bmin;
+                float minHoriz = glm::min(sizeAfterShrink.x, sizeAfterShrink.z);
+                bool isFloor = (sizeAfterShrink.y < minHoriz * m_FloorAspectThreshold);
+
+                m_PlayStaticColliders.push_back({ bmin, bmax, isFloor });
             }
         }
     }
@@ -566,6 +594,7 @@ public:
         float bestTop = -FLT_MAX;
 
         for (const auto& c : m_PlayStaticColliders) {
+            if (!c.IsFloor) continue;
             bool overlapsXZ =
                 (desiredSpawn.x >= c.Min.x - probeRadius && desiredSpawn.x <= c.Max.x + probeRadius) &&
                 (desiredSpawn.z >= c.Min.z - probeRadius && desiredSpawn.z <= c.Max.z + probeRadius);
@@ -631,6 +660,7 @@ public:
         m_PlayerOnGround = false;
 
         for (const auto& c : m_PlayStaticColliders) {
+            if (!c.IsFloor) continue;
             bool overlapXZ =
                 (pos.x + halfExtents.x > c.Min.x && pos.x - halfExtents.x < c.Max.x) &&
                 (pos.z + halfExtents.z > c.Min.z && pos.z - halfExtents.z < c.Max.z);
@@ -1243,17 +1273,44 @@ public:
                 : ImVec4(0.85f, 0.2f, 0.2f, 0.92f);
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-            ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
 
-            float btnW = 110.0f;
+            const bool inEditor = (m_State == EngineState::Editor);
+            std::shared_ptr<Purr::Texture> logoTex = inEditor ? m_PlayButtonTex : m_StopButtonTex;
+            bool useImageButton = (logoTex && logoTex->IsValid());
+            float btnW = useImageButton ? 150.0f : 110.0f;
+            float btnH = useImageButton ? (btnW * (354.0f / 937.0f)) : 0.0f;
             float cx = contentPos.x + m_ViewportSize.x * 0.5f - btnW * 0.5f;
             ImGui::SetCursorScreenPos(ImVec2(cx, contentPos.y + 8));
-            if (ImGui::Button(btnLabel, ImVec2(btnW, 0))) {
+            bool clicked = false;
+            if (useImageButton) {
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                // Même UV que Play_Purr (flip vertical) pour Stop_Purr
+                clicked = ImGui::ImageButton(
+                    inEditor ? "##play_logo_button" : "##stop_logo_button",
+                    (ImTextureID)(uintptr_t)logoTex->GetRendererID(),
+                    ImVec2(btnW, btnH),
+                    ImVec2(0.0f, 1.0f),
+                    ImVec2(1.0f, 0.0f)
+                );
+                ImGui::PopStyleColor(4);
+                ImGui::PopStyleVar(2);
+            }
+            else {
+                ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
+                clicked = ImGui::Button(btnLabel, ImVec2(btnW, 0));
+                ImGui::PopStyleColor();
+            }
+
+            if (clicked) {
                 if (m_State == EngineState::Editor) EnterPlayMode();
                 else                                StopPlayMode();
             }
 
-            ImGui::PopStyleColor();
             ImGui::PopStyleVar();
 
             if (m_State == EngineState::Playing) {
@@ -1460,6 +1517,7 @@ public:
             ImGui::Separator();
             ImGui::Text("Collision");
             ImGui::SliderFloat("Collider Shrink XZ", &m_ColliderShrinkXZ, 0.0f, 0.35f);
+            ImGui::SliderFloat("Floor Aspect Threshold", &m_FloorAspectThreshold, 0.2f, 2.0f);
             ImGui::TextDisabled("Ces valeurs seront utilisees au prochain Play.");
         }
 
@@ -1848,6 +1906,7 @@ private:
     struct StaticColliderAABB {
         glm::vec3 Min = glm::vec3(0.0f);
         glm::vec3 Max = glm::vec3(0.0f);
+        bool IsFloor = true;
     };
 
     struct SavedCameraState {
@@ -2568,7 +2627,7 @@ private:
     std::shared_ptr<Purr::VertexArray>  m_VA, m_PlaneVA, m_BBoxVA;
     std::shared_ptr<Purr::VertexArray>  m_TriangleVA, m_CircleVA, m_RegPolygonVA, m_EllipseVA, m_SphereVA;
     std::shared_ptr<Purr::Shader>       m_Shader, m_TexShader, m_WireShader;
-    std::shared_ptr<Purr::Texture>      m_CheckerTex;
+    std::shared_ptr<Purr::Texture>      m_CheckerTex, m_PlayButtonTex, m_StopButtonTex;
     std::shared_ptr<Purr::Framebuffer>  m_Framebuffer;
     Purr::Camera                        m_Camera;
 
@@ -2614,6 +2673,7 @@ private:
     bool                          m_PlayerOnGround = false;
     float                         m_Gravity = -18.0f;
     float                         m_ColliderShrinkXZ = 0.12f;
+    float                         m_FloorAspectThreshold = 0.75f;
     bool                          m_EnableAutoSpawnSnap = true;
     float                         m_AutoSpawnSearchHeight = 8.0f;
     float                         m_AutoSpawnClearance = 0.02f;
