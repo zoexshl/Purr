@@ -87,11 +87,13 @@ struct SceneObject {
     std::vector<RenderPart> Parts;
     std::unique_ptr<ScriptComponent> Script;
     float TexTiling = 1.0f;
+    bool IsColliderOnly = false;
 
     SceneObject(const SceneObject& o)
         : Name(o.Name), ParentIndex(o.ParentIndex)  // copier ParentIndex
         , Position(o.Position), Rotation(o.Rotation), Scale(o.Scale)
         , Mat(o.Mat), Type(o.Type), Tex(o.Tex), TexPath(o.TexPath), MeshPath(o.MeshPath), Parts(o.Parts)
+        , TexTiling(o.TexTiling), IsColliderOnly(o.IsColliderOnly)
         , Script(nullptr) {
     }
 
@@ -99,6 +101,8 @@ struct SceneObject {
         Name = o.Name; ParentIndex = o.ParentIndex;
         Position = o.Position; Rotation = o.Rotation; Scale = o.Scale;
         Mat = o.Mat; Type = o.Type; Tex = o.Tex; TexPath = o.TexPath; MeshPath = o.MeshPath; Parts = o.Parts;
+        TexTiling = o.TexTiling;
+        IsColliderOnly = o.IsColliderOnly;
         Script = nullptr; return *this;
     }
     SceneObject() = default;
@@ -487,7 +491,8 @@ public:
         if (m_EnableAutoSpawnSnap)
             m_Objects[playerIdx].Position = ComputeGroundedSpawn(m_Objects[playerIdx].Position, m_Objects[playerIdx].Scale);
         m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
-        for (int i = 0; i < 30; i++)
+        m_PlayerOnGround = false;
+        for (int i = 0; i < 120 && !m_PlayerOnGround; i++)
             ResolvePlayerPhysics(m_Objects[playerIdx], 0.016f);
         m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
         PURR_CORE_INFO("Play spawn source={} colliders={} -> x:{:.3f} y:{:.3f} z:{:.3f}",
@@ -548,7 +553,10 @@ public:
                     if (bmin.x > bmax.x) std::swap(bmin.x, bmax.x);
                     if (bmin.y > bmax.y) std::swap(bmin.y, bmax.y);
                     if (bmin.z > bmax.z) std::swap(bmin.z, bmax.z);
-                    m_PlayStaticColliders.push_back({ bmin, bmax, true });
+                    glm::vec3 sz = bmax - bmin;
+                    float mh = glm::min(sz.x, sz.z);
+                    bool isFloorPrim = (sz.y > 0.001f) && (sz.y < mh * m_FloorAspectThreshold);
+                    m_PlayStaticColliders.push_back({ bmin, bmax, isFloorPrim });
                 }
                 continue;
             }
@@ -564,29 +572,26 @@ public:
                 if (bmin.y > bmax.y) std::swap(bmin.y, bmax.y);
                 if (bmin.z > bmax.z) std::swap(bmin.z, bmax.z);
 
-                // Les AABB de meshes non alignés deviennent trop larges:
-                // on réduit un peu en XZ pour éviter de bloquer loin des murs.
-                glm::vec3 szPre = bmax - bmin;
-                glm::vec3 shrink = {
-                    glm::min(szPre.x * m_ColliderShrinkXZ, 0.35f),
-                    0.0f,
-                    glm::min(szPre.z * m_ColliderShrinkXZ, 0.35f)
-                };
-                bmin += shrink;
-                bmax -= shrink;
-                if (bmin.x >= bmax.x || bmin.y >= bmax.y || bmin.z >= bmax.z)
-                    continue;
-
                 glm::vec3 size = bmax - bmin;
                 float minHoriz = glm::min(size.x, size.z);
-
-                // Seuil strict : plancher = très plat par rapport à son étendue horizontale
                 bool isFloor = (size.y > 0.001f) && (size.y < minHoriz * m_FloorAspectThreshold);
 
-                if (isFloor) {
-                    // Thin slab au top — évite le cas « joueur à l'intérieur » d'un gros union
+                if (!isFloor) {
+                    // Mur : shrink XZ pour éviter les collisions trop larges
+                    glm::vec3 shrink = {
+                        glm::min(size.x * m_ColliderShrinkXZ, 0.35f),
+                        0.0f,
+                        glm::min(size.z * m_ColliderShrinkXZ, 0.35f)
+                    };
+                    bmin += shrink;
+                    bmax -= shrink;
+                    if (bmin.x >= bmax.x || bmin.y >= bmax.y || bmin.z >= bmax.z)
+                        continue;
+                }
+                else {
+                    // Plancher : pas de shrink XZ (évite les trous entre dalles), fine dalle en haut
                     float topY = bmax.y;
-                    bmin.y = topY - glm::min(0.4f, size.y * 0.5f);
+                    bmin.y = topY - glm::min(0.05f, size.y * 0.5f);
                     bmax.y = topY;
                 }
 
@@ -599,7 +604,22 @@ public:
             if (c.IsFloor) nFloor++;
             else           nWall++;
         }
-        PURR_CORE_INFO("Colliders built: {} planchers, {} murs", nFloor, nWall);
+        PURR_CORE_INFO("Colliders built: {} planchers, {} murs (shrink XZ={:.2f})",
+            nFloor, nWall, m_ColliderShrinkXZ);
+        if (nFloor > 0) {
+            float hiY = -FLT_MAX;
+            glm::vec3 hiMin(0.0f), hiMax(0.0f);
+            for (const auto& c : m_PlayStaticColliders) {
+                if (!c.IsFloor) continue;
+                if (c.Max.y > hiY) {
+                    hiY = c.Max.y;
+                    hiMin = c.Min;
+                    hiMax = c.Max;
+                }
+            }
+            PURR_CORE_INFO("Plancher le plus haut (AABB): min ({:.3f},{:.3f},{:.3f}) max ({:.3f},{:.3f},{:.3f})",
+                hiMin.x, hiMin.y, hiMin.z, hiMax.x, hiMax.y, hiMax.z);
+        }
     }
 
     glm::vec3 ComputeGroundedSpawn(const glm::vec3& desiredSpawn, const glm::vec3& playerScale) const
@@ -709,34 +729,28 @@ public:
             }
         }
 
-        // 2) Horizontal X: murs
+        // 2) Horizontal XZ combiné — un seul axe (pénétration minimale) pour éviter double push au coin d'un cube
         for (const auto& c : m_PlayStaticColliders) {
-            bool overlapYZ =
-                (pos.y + halfExtents.y > c.Min.y && pos.y - halfExtents.y < c.Max.y) &&
-                (pos.z + halfExtents.z > c.Min.z && pos.z - halfExtents.z < c.Max.z);
-            if (!overlapYZ) continue;
             bool overlapX = (pos.x + halfExtents.x > c.Min.x && pos.x - halfExtents.x < c.Max.x);
-            if (!overlapX) continue;
-
-            float penLeft = (pos.x + halfExtents.x) - c.Min.x;
-            float penRight = c.Max.x - (pos.x - halfExtents.x);
-            if (penLeft < penRight) pos.x -= penLeft;
-            else                     pos.x += penRight;
-        }
-
-        // 3) Horizontal Z: murs
-        for (const auto& c : m_PlayStaticColliders) {
-            bool overlapXY =
-                (pos.x + halfExtents.x > c.Min.x && pos.x - halfExtents.x < c.Max.x) &&
-                (pos.y + halfExtents.y > c.Min.y && pos.y - halfExtents.y < c.Max.y);
-            if (!overlapXY) continue;
+            bool overlapY = (pos.y + halfExtents.y > c.Min.y && pos.y - halfExtents.y < c.Max.y);
             bool overlapZ = (pos.z + halfExtents.z > c.Min.z && pos.z - halfExtents.z < c.Max.z);
-            if (!overlapZ) continue;
+            if (!overlapX || !overlapY || !overlapZ) continue;
 
-            float penBack = (pos.z + halfExtents.z) - c.Min.z;
-            float penFront = c.Max.z - (pos.z - halfExtents.z);
-            if (penBack < penFront) pos.z -= penBack;
-            else                    pos.z += penFront;
+            float penXL = (pos.x + halfExtents.x) - c.Min.x;
+            float penXR = c.Max.x - (pos.x - halfExtents.x);
+            float penZB = (pos.z + halfExtents.z) - c.Min.z;
+            float penZF = c.Max.z - (pos.z - halfExtents.z);
+            float penX = glm::min(penXL, penXR);
+            float penZ = glm::min(penZB, penZF);
+
+            if (penX < penZ) {
+                if (penXL < penXR) { pos.x -= penXL; if (m_PlayerVelocity.x > 0.0f) m_PlayerVelocity.x = 0.0f; }
+                else               { pos.x += penXR; if (m_PlayerVelocity.x < 0.0f) m_PlayerVelocity.x = 0.0f; }
+            }
+            else {
+                if (penZB < penZF) { pos.z -= penZB; if (m_PlayerVelocity.z > 0.0f) m_PlayerVelocity.z = 0.0f; }
+                else               { pos.z += penZF; if (m_PlayerVelocity.z < 0.0f) m_PlayerVelocity.z = 0.0f; }
+            }
         }
 
         player.Position = pos;
@@ -1038,6 +1052,9 @@ public:
 
         for (auto& obj : m_Objects)
         {
+            if (m_State == EngineState::Playing && obj.IsColliderOnly)
+                continue;
+
             glm::mat4 model = obj.GetWorldTransform(m_Objects);
             glm::mat4 normalMat = glm::transpose(glm::inverse(model));
 
@@ -1648,6 +1665,8 @@ public:
             if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
             ImGui::DragFloat3("Scale", glm::value_ptr(obj.Scale), 0.01f, 0.01f, 10.0f);
             if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
+            if (ImGui::Checkbox("Collider invisible (jeu)", &obj.IsColliderOnly))
+                SaveSnapshot();
             ImGui::Separator();
             ImGui::Text("Texture");
             if (obj.Tex && !obj.TexPath.empty()) {
@@ -1830,6 +1849,7 @@ public:
             o["specular"] = { obj.Mat.Specular.x, obj.Mat.Specular.y, obj.Mat.Specular.z };
             o["shininess"] = obj.Mat.Shininess;
             o["illum"] = (int)obj.Mat.Model;
+            o["colliderOnly"] = obj.IsColliderOnly;
             j["objects"].push_back(o);
         }
         std::ofstream f(path);
@@ -1876,6 +1896,7 @@ public:
             obj.Mat.Specular = { o["specular"][0], o["specular"][1], o["specular"][2] };
             obj.Mat.Shininess = o["shininess"];
             obj.Mat.Model = (IlluminationModel)(int)o["illum"];
+            obj.IsColliderOnly = o.value("colliderOnly", false);
             if (!obj.TexPath.empty())
                 obj.Tex = Purr::TextureManager::Load(obj.TexPath);
             m_Objects.push_back(obj);
