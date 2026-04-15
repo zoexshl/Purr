@@ -460,11 +460,12 @@ public:
         // Forcer le chargement mesh + texture maintenant (pas au premier frame)
         GetMeshForObject(m_Objects[playerIdx]);
         BuildPlayStaticColliders(playerIdx);
-        if (!hasSpawnMarker && m_EnableAutoSpawnSnap)
+        if (m_EnableAutoSpawnSnap)
             m_Objects[playerIdx].Position = ComputeGroundedSpawn(m_Objects[playerIdx].Position, m_Objects[playerIdx].Scale);
-        ResolvePlayerPhysics(m_Objects[playerIdx], 0.0f);
         m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
-        m_PlayerOnGround = false;
+        for (int i = 0; i < 30; i++)
+            ResolvePlayerPhysics(m_Objects[playerIdx], 0.016f);
+        m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
         PURR_CORE_INFO("Play spawn source={} colliders={} -> x:{:.3f} y:{:.3f} z:{:.3f}",
             hasSpawnMarker ? "marker" : (m_EnableAutoSpawnSnap ? "autosnap" : "preset"),
             (int)m_PlayStaticColliders.size(),
@@ -563,7 +564,6 @@ public:
         float probeRadius = glm::max(0.12f * playerScale.x, 0.08f);
         bool found = false;
         float bestTop = -FLT_MAX;
-        float bestScore = FLT_MAX;
 
         for (const auto& c : m_PlayStaticColliders) {
             bool overlapsXZ =
@@ -571,13 +571,16 @@ public:
                 (desiredSpawn.z >= c.Min.z - probeRadius && desiredSpawn.z <= c.Max.z + probeRadius);
             if (!overlapsXZ) continue;
 
-            float deltaY = c.Max.y - desiredSpawn.y;
-            if (deltaY < -m_AutoSpawnSearchHeight || deltaY > m_AutoSpawnSearchHeight)
+            // On ne garde que les planchers sous le spawn (pas plafonds/murs).
+            if (c.Max.y > desiredSpawn.y + halfHeight)
                 continue;
 
-            float score = fabsf(deltaY);
-            if (score < bestScore) {
-                bestScore = score;
+            // Limite de recherche pour éviter de snap vers des surfaces trop basses.
+            if ((desiredSpawn.y - c.Max.y) > m_AutoSpawnSearchHeight)
+                continue;
+
+            // On prend le plancher le plus haut sous le spawn.
+            if (c.Max.y > bestTop) {
                 bestTop = c.Max.y;
                 found = true;
             }
@@ -938,13 +941,14 @@ public:
         // Scripts — seulement en Play mode
         if (m_State == EngineState::Playing)
         {
+            float safeDt = glm::min(dt, 0.033f);
             for (auto& obj : m_Objects)
-                if (obj.Script) obj.Script->OnUpdate(dt);
+                if (obj.Script) obj.Script->OnUpdate(safeDt);
 
             for (auto& obj : m_Objects) {
                 if (obj.Name == "Player") {
-                    ResolvePlayerPhysics(obj, dt);
-                    UpdatePlayCamera(obj, dt);
+                    ResolvePlayerPhysics(obj, safeDt);
+                    UpdatePlayCamera(obj, safeDt);
                     break;
                 }
             }
