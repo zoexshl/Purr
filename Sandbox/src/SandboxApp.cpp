@@ -222,6 +222,7 @@ public:
         glm::vec3 MapPosition = { 0.0f, 0.0f, 0.0f };
         glm::vec3 MapScale = { 1.0f, 1.0f, 1.0f };
         glm::vec3 PlayerSpawn = { 0.0f, 0.0f, 0.0f }; // utilisé à l'étape gameplay
+        glm::vec3 PlayerScale = { 1.0f, 1.0f, 1.0f };
     };
 
     // Constructeur
@@ -431,8 +432,8 @@ public:
         player.Name = "Player";
         player.Type = PrimitiveType::Custom;
         player.MeshPath = "assets/models/roblox/baconHair1Tex.obj";
-        player.Position = { 0.0f, 0.0f, 0.0f };
-        player.Scale = { 1.0f, 1.0f, 1.0f };
+        player.Position = m_CurrentMapSpawn;
+        player.Scale = m_CurrentPlayerScale;
         player.Mat.Diffuse = { 1.0f, 1.0f, 1.0f };  // blanc = texture pure
         player.Mat.Specular = { 0.3f, 0.3f, 0.3f };
         player.Mat.Shininess = 32.0f;
@@ -1146,9 +1147,9 @@ public:
         if (m_State == EngineState::Playing) ImGui::BeginDisabled();
 
         const MapPreset mapPresets[] = {
-            { "MM2", "assets/models/roblox/mm2/mm2map1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 0.5f, 0.0f} },
-            { "Island", "assets/models/roblox/island/island1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 0.5f, 0.0f} },
-            { "Doomspires", "assets/models/roblox/doomspires/doomspires1Tex.obj", {0.0f, 0.0f, 0.0f}, {18.0f, 18.0f, 18.0f}, {0.0f, 0.5f, 0.0f} },
+            { "MM2", "assets/models/roblox/mm2/mm2map1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 0.8f, 0.0f}, {1.1f, 1.1f, 1.1f} },
+            { "Island", "assets/models/roblox/island/island1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 1.0f, 0.0f}, {1.2f, 1.2f, 1.2f} },
+            { "Doomspires", "assets/models/roblox/doomspires/doomspires1Tex.obj", {0.0f, 0.0f, 0.0f}, {18.0f, 18.0f, 18.0f}, {0.0f, 1.2f, 0.0f}, {1.3f, 1.3f, 1.3f} },
         };
 
         for (const auto& preset : mapPresets) {
@@ -1159,6 +1160,13 @@ public:
         ImGui::NewLine();
         if (!m_CurrentMapName.empty())
             ImGui::TextColored({ 0.6f, 1.0f, 0.6f, 1.0f }, "Map chargee : %s", m_CurrentMapName.c_str());
+        if (!m_CurrentMapName.empty()) {
+            ImGui::Text("Spawn joueur (preset)");
+            ImGui::DragFloat3("##map_spawn_player", glm::value_ptr(m_CurrentMapSpawn), 0.05f);
+            ImGui::Text("Scale joueur (preset)");
+            ImGui::DragFloat3("##map_scale_player", glm::value_ptr(m_CurrentPlayerScale), 0.01f, 0.1f, 10.0f);
+            ImGui::TextDisabled("Ces valeurs seront utilisees au prochain Play.");
+        }
 
         if (m_State == EngineState::Playing) ImGui::EndDisabled();
 
@@ -1520,6 +1528,7 @@ public:
 
         m_CurrentMapName = preset.Label;
         m_CurrentMapSpawn = preset.PlayerSpawn;
+        m_CurrentPlayerScale = preset.PlayerScale;
     }
 
 private:
@@ -2268,6 +2277,7 @@ private:
     std::unordered_map<std::string, std::string>                        m_ObjTexCache;
     std::string                                                         m_CurrentMapName;
     glm::vec3                                                           m_CurrentMapSpawn = { 0.0f, 0.0f, 0.0f };
+    glm::vec3                                                           m_CurrentPlayerScale = { 1.0f, 1.0f, 1.0f };
 
     // Play mode
     enum class EngineState { Editor, Playing };
