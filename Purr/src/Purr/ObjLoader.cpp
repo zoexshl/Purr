@@ -45,7 +45,7 @@ namespace Purr {
 
     std::shared_ptr<VertexArray> LoadOBJ(const std::string& path, std::string& outTexPath)
     {
-        //outTexPath = FindDiffuseTexture(path);
+        outTexPath = FindDiffuseTexture(path);
         std::ifstream file(path);
         if (!file.is_open()) return nullptr;
 

@@ -163,6 +163,11 @@ project "Sandbox"
 			"PURR_PLATFORM_WINDOWS"
 		}
 	
+	filter "files:assets/**"
+		buildaction "None"
+	filter {}
+
+
 	filter "configurations:Debug"
 		defines "PURR_DEBUG"
 		runtime "Debug"

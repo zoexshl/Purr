@@ -10,6 +10,7 @@ namespace Purr {
         stbi_set_flip_vertically_on_load(1);
 
         int width, height, channels;
+        //stbi_set_flip_vertically_on_load(true);
         unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
 
         if (!data) {

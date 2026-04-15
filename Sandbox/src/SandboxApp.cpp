@@ -61,7 +61,8 @@ public:
     virtual ~ScriptComponent() = default;
     virtual void OnStart() {}
     virtual void OnUpdate(float dt) {}
-
+    virtual const char* GetName() { return "Script"; }
+    virtual const char* GetSource() { return ""; }
     struct SceneObject* Owner = nullptr; // forward declare, assigné au Play
 };
 
@@ -74,6 +75,7 @@ struct SceneObject {
     std::shared_ptr<Purr::Texture> Tex = nullptr;
     std::string TexPath = "", MeshPath = "";
     std::unique_ptr<ScriptComponent> Script;
+    float TexTiling = 1.0f;
 
     SceneObject(const SceneObject& o)
         : Name(o.Name), ParentIndex(o.ParentIndex)  // copier ParentIndex
@@ -115,7 +117,7 @@ struct SceneObject {
 class CatScript : public ScriptComponent {
 public:
     float Speed = 3.0f;
-    float BobAmp = 0.06f;   // amplitude du "bounce" vertical
+    float BobAmp = 0.00f;   // amplitude du "bounce" vertical | désactivé pour le moment.
     float BobSpeed = 8.0f;
     float RotSpeed = 90.0f;   // degrés/sec pour la rotation
 
@@ -154,6 +156,40 @@ public:
         // Bob vertical (toujours, ou seulement en mouvement)
         m_Time += dt;
         Owner->Position.y = m_BaseY + (moving ? sinf(m_Time * BobSpeed) * BobAmp : 0.0f);
+    }
+
+    const char* GetName() override { return "CatScript"; }
+    const char* GetSource() override {
+        return
+            R"(class CatScript : public ScriptComponent {
+public:
+    float Speed    = 3.0f;
+    float BobAmp   = 0.06f;
+    float BobSpeed = 8.0f;
+
+    void OnStart() override {
+        m_BaseY = Owner->Position.y;
+    }
+
+    void OnUpdate(float dt) override {
+        glm::vec3 move = {0,0,0};
+        if (IsKeyDown(Key::A)) move.x -= 1.0f;
+        if (IsKeyDown(Key::D)) move.x += 1.0f;
+        if (IsKeyDown(Key::W)) move.z -= 1.0f;
+        if (IsKeyDown(Key::S)) move.z += 1.0f;
+
+        if (glm::length(move) > 0.0f) {
+            move = glm::normalize(move) * Speed * dt;
+            Owner->Position += move;
+        }
+        Owner->Position.y = m_BaseY
+            + sinf(m_Time * BobSpeed) * BobAmp;
+        m_Time += dt;
+    }
+private:
+    float m_BaseY = 0.0f;
+    float m_Time  = 0.0f;
+};)";
     }
 
 private:
@@ -200,10 +236,13 @@ public:
         m_Objects.push_back(c);
 
         SceneObject plane; plane.Name = "Plan (sol)"; plane.Type = PrimitiveType::Plane;
+        plane.TexTiling = 4.0f;
         plane.Position = { 0,-0.5f,0 }; plane.Scale = { 6,1,6 };
         plane.Mat.Model = IlluminationModel::Lambert;
         plane.Tex = m_CheckerTex;
         m_Objects.push_back(plane);
+
+
 
         // inititialisation de la selection 
         m_Selected = 0;
@@ -370,21 +409,46 @@ public:
         m_GizmoDragging = false;
         m_ActiveAxis = GizmoAxis::None;
 
-        // Assigner les scripts à chaque Play
-        if (!m_Objects.empty())
-            m_Objects[0].Script = std::make_unique<CatScript>();
+        // --- Spawn du personnage Roblox ---
+        SceneObject player;
+        player.Name = "Player";
+        player.Type = PrimitiveType::Custom;
+        player.MeshPath = "assets/models/roblox/baconHair1Tex.obj";
+        player.Position = { 0.0f, 0.0f, 0.0f };
+        player.Scale = { 1.0f, 1.0f, 1.0f };
+        player.Mat.Diffuse = { 1.0f, 1.0f, 1.0f };  // blanc = texture pure
+        player.Mat.Specular = { 0.3f, 0.3f, 0.3f };
+        player.Mat.Shininess = 32.0f;
+        player.Mat.Model = IlluminationModel::Phong;
+        m_Objects.push_back(player);
 
-        for (auto& obj : m_Objects)
-            if (obj.Script) { obj.Script->Owner = &obj; obj.Script->OnStart(); }
+        int playerIdx = (int)m_Objects.size() - 1;
+
+        // Forcer le chargement mesh + texture maintenant (pas au premier frame)
+        GetMeshForObject(m_Objects[playerIdx]);
+
+
+        // Attacher le script de mouvement
+        m_Objects[playerIdx].Script = std::make_unique<CatScript>();
+        m_Objects[playerIdx].Script->Owner = &m_Objects[playerIdx];
+        m_Objects[playerIdx].Script->OnStart();
+
+        // Scripts éventuels sur les autres objets
+        for (int i = 0; i < playerIdx; i++)
+            if (m_Objects[i].Script) {
+                m_Objects[i].Script->Owner = &m_Objects[i];
+                m_Objects[i].Script->OnStart();
+            }
     }
 
     void StopPlayMode()
     {
-        m_Objects = m_SavedScene;           // revert
+        m_Objects = m_SavedScene;
         m_State = EngineState::Editor;
         m_Selection.clear();
         m_Selected = m_Objects.empty() ? -1 : 0;
         if (m_Selected >= 0) m_Selection.insert(m_Selected);
+
     }
 
 
@@ -644,18 +708,6 @@ public:
             glm::mat4 model = obj.GetWorldTransform(m_Objects);
             glm::mat4 normalMat = glm::transpose(glm::inverse(model));
 
-            /*
-            auto& va = [&]() -> std::shared_ptr<Purr::VertexArray>&{
-                switch (obj.Type) {
-                case PrimitiveType::Plane:         return m_PlaneVA;
-                case PrimitiveType::Triangle:      return m_TriangleVA;
-                case PrimitiveType::Circle:        return m_CircleVA;
-                case PrimitiveType::RegularPolygon:return m_RegPolygonVA;
-                case PrimitiveType::Ellipse:       return m_EllipseVA;
-                default:                           return m_VA; // Cube
-                }
-                }();
-            */
             auto va = GetMeshForObject(obj);
             if (!va) continue;  // mesh pas encore chargé ou fichier invalide
 
@@ -668,6 +720,7 @@ public:
                 m_TexShader->SetFloat3("u_MatDiffuse", obj.Mat.Diffuse);
                 m_TexShader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
                 m_TexShader->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
                 m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
                 m_TexShader->SetInt("u_Texture", 0);
                 obj.Tex->Bind(0);
@@ -1184,8 +1237,6 @@ public:
             if (ImGui::Combo("##illum", &model, s_ModelNames, 3)) obj.Mat.Model = (IlluminationModel)model;
 
 
-
-
             // ---- Multi-sélection ----
             if (m_Selection.size() > 1)
             {
@@ -1221,6 +1272,29 @@ public:
             }
 
 
+
+         
+            // ---- Script -----------------------------------------------
+            if (m_Selected >= 0 && m_Selected < (int)m_Objects.size()
+                && m_Objects[m_Selected].Script)
+            {
+                auto* script = m_Objects[m_Selected].Script.get();
+
+                ImGui::Separator();
+                std::string header = std::string("[>]  ") + script->GetName();
+                if (ImGui::CollapsingHeader(header.c_str()))
+                {
+                    ImVec2 avail = ImGui::GetContentRegionAvail();
+                    ImGui::InputTextMultiline(
+                        "##src",
+                        const_cast<char*>(script->GetSource()),
+                        strlen(script->GetSource()) + 1,
+                        ImVec2(avail.x, 300.0f),
+                        ImGuiInputTextFlags_ReadOnly
+                    );
+                    ImGui::TextDisabled("Attache a : %s", m_Objects[m_Selected].Name.c_str());
+                }
+            }
 
             ImGui::End();
         }
@@ -1364,18 +1438,27 @@ public:
 
 private:
 
-    std::shared_ptr<Purr::VertexArray> GetMeshForObject(const SceneObject& obj)
+    std::shared_ptr<Purr::VertexArray> GetMeshForObject(SceneObject& obj)
     {
         if (obj.Type == PrimitiveType::Custom) {
             auto it = m_MeshCache.find(obj.MeshPath);
-            if (it != m_MeshCache.end()) return it->second;
+            if (it != m_MeshCache.end()) {
+                // Cache hit — assigner la texture quand même si manquante
+                if (!obj.Tex) {
+                    auto texIt = m_ObjTexCache.find(obj.MeshPath);
+                    if (texIt != m_ObjTexCache.end() && !texIt->second.empty())
+                        obj.Tex = std::make_shared<Purr::Texture>(texIt->second);
+                }
+                return it->second;
+            }
 
             std::string texPath;
             auto va = Purr::LoadOBJ(obj.MeshPath, texPath);
-
-
             if (va) {
                 m_MeshCache[obj.MeshPath] = va;
+                m_ObjTexCache[obj.MeshPath] = texPath;   // ← stocker le texPath aussi
+                if (!texPath.empty() && !obj.Tex)
+                    obj.Tex = std::make_shared<Purr::Texture>(texPath);
             }
             return va;
         }
@@ -1897,7 +1980,7 @@ private:
             })";
         m_Shader = std::make_shared<Purr::Shader>(vs, fs);
     }
-
+    // vec3 tc=texture(u_Texture,v_TexCoord*4.0).rgb*u_MatDiffuse;
     void BuildTexturedShader() {
         std::string vs = R"(
             #version 410 core
@@ -1914,15 +1997,21 @@ private:
         std::string fs = R"(
             #version 410 core
             in vec3 v_FragPos,v_Normal; in vec2 v_TexCoord;
+
             struct LightData{vec3 Position,Color;float Intensity,Constant,Linear,Quadratic;};
+
             uniform LightData u_Lights[4];
             uniform float u_AmbientStrength;
             uniform vec3 u_CamPos,u_MatDiffuse,u_MatSpecular;
             uniform float u_MatShininess; uniform int u_IllumModel;
             uniform sampler2D u_Texture;
+            uniform float u_TilingFactor; 
             out vec4 color;
+
             void main(){
-                vec3 tc=texture(u_Texture,v_TexCoord*4.0).rgb*u_MatDiffuse;
+               vec2 uv = v_TexCoord * u_TilingFactor;
+                vec3 tc = texture(u_Texture, uv).rgb * u_MatDiffuse;
+
                 vec3 N=normalize(v_Normal),V=normalize(u_CamPos-v_FragPos);
                 vec3 r=u_AmbientStrength*tc;
                 for(int i=0;i<4;i++){
@@ -2014,6 +2103,8 @@ private:
 
     // Cache de mesh
     std::unordered_map<std::string, std::shared_ptr<Purr::VertexArray>> m_MeshCache;
+   
+    std::unordered_map<std::string, std::string>                        m_ObjTexCache;
 
     // Play mode
     enum class EngineState { Editor, Playing };
