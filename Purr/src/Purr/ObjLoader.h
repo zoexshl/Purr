@@ -18,6 +18,8 @@ namespace Purr {
         std::string TexturePath;
         std::string MaterialName;
         glm::vec3 DiffuseTint = glm::vec3(1.0f);
+        glm::vec3 BoundsMin = glm::vec3(0.0f);
+        glm::vec3 BoundsMax = glm::vec3(0.0f);
     };
 
     // Centre le mesh et le scale pour qu'il rentre dans un cube de taille 1

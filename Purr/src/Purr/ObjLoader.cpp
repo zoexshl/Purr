@@ -353,6 +353,15 @@ namespace Purr {
             out.TexturePath = sm.TexturePath;
             out.MaterialName = sm.MaterialName;
             out.DiffuseTint = sm.DiffuseTint;
+            glm::vec3 bmin(FLT_MAX);
+            glm::vec3 bmax(-FLT_MAX);
+            for (const auto& ov : sm.Vertices) {
+                glm::vec3 p(ov.px, ov.py, ov.pz);
+                bmin = glm::min(bmin, p);
+                bmax = glm::max(bmax, p);
+            }
+            out.BoundsMin = bmin;
+            out.BoundsMax = bmax;
             outSubmeshes.push_back(out);
 
             if (outFirstTexPath.empty() && !sm.TexturePath.empty())

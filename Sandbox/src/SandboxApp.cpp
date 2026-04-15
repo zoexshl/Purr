@@ -73,6 +73,8 @@ struct SceneObject {
         std::shared_ptr<Purr::Texture> Texture = nullptr;
         std::string TexturePath;
         glm::vec3 DiffuseTint = glm::vec3(1.0f);
+        glm::vec3 BoundsMin = glm::vec3(0.0f);
+        glm::vec3 BoundsMax = glm::vec3(0.0f);
     };
 
     std::string Name;
@@ -121,6 +123,8 @@ struct SceneObject {
     }
 };
 
+static float s_PlayCameraAzimuthDeg = 35.0f;
+
 
 
 class CatScript : public ScriptComponent {
@@ -132,7 +136,6 @@ public:
 
     void OnStart() override
     {
-        m_BaseY = Owner->Position.y;
         m_Time = 0.0f;
     }
 
@@ -140,11 +143,14 @@ public:
     {
         ImGuiIO& io = ImGui::GetIO();
         glm::vec3 move = { 0,0,0 };
+        float az = glm::radians(s_PlayCameraAzimuthDeg);
+        glm::vec3 forward = glm::normalize(glm::vec3(-cosf(az), 0.0f, -sinf(az)));
+        glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0, 1, 0)));
 
-        if (ImGui::IsKeyDown(ImGuiKey_A)) move.x -= 1.0f;
-        if (ImGui::IsKeyDown(ImGuiKey_D)) move.x += 1.0f;
-        if (ImGui::IsKeyDown(ImGuiKey_W)) move.z -= 1.0f;
-        if (ImGui::IsKeyDown(ImGuiKey_S)) move.z += 1.0f;
+        if (ImGui::IsKeyDown(ImGuiKey_W)) move += forward;
+        if (ImGui::IsKeyDown(ImGuiKey_S)) move -= forward;
+        if (ImGui::IsKeyDown(ImGuiKey_A)) move -= right;
+        if (ImGui::IsKeyDown(ImGuiKey_D)) move += right;
 
         bool moving = glm::length(move) > 0.0f;
 
@@ -154,7 +160,9 @@ public:
             Owner->Position += move;
 
             // Rotation vers la direction de mouvement
-            float targetAngle = glm::degrees(atan2f(move.x, move.z));
+            // Le mesh Roblox est orienté à l'envers par rapport au repère monde:
+            // on ajoute 180° pour que W = avance visuellement "vers l'avant".
+            float targetAngle = glm::degrees(atan2f(move.x, move.z)) + 180.0f;
             float diff = targetAngle - Owner->Rotation.y;
             // wrap
             while (diff > 180.0f) diff -= 360.0f;
@@ -162,9 +170,8 @@ public:
             Owner->Rotation.y += diff * RotSpeed * dt * 0.1f;
         }
 
-        // Bob vertical (toujours, ou seulement en mouvement)
+        // Le Y est geré par la physique globale (gravité + collisions).
         m_Time += dt;
-        Owner->Position.y = m_BaseY + (moving ? sinf(m_Time * BobSpeed) * BobAmp : 0.0f);
     }
 
     const char* GetName() override { return "CatScript"; }
@@ -202,7 +209,6 @@ private:
     }
 
 private:
-    float m_BaseY = 0.0f;
     float m_Time = 0.0f;
 };
 // -----------------------------------------------------------------------
@@ -423,16 +429,25 @@ public:
     void EnterPlayMode()
     {
         m_SavedScene = m_Objects;
+        m_SavedCamera.Mode = m_Camera.GetProjectionMode();
+        m_SavedCamera.Target = m_Camera.GetTarget();
+        m_SavedCamera.Radius = m_Camera.GetRadius();
+        m_SavedCamera.Azimuth = m_Camera.GetAzimuth();
+        m_SavedCamera.Elevation = m_Camera.GetElevation();
         m_State = EngineState::Playing;
         m_GizmoDragging = false;
         m_ActiveAxis = GizmoAxis::None;
+
+        // Priorité spawn: marker explicite dans la scène.
+        glm::vec3 markerSpawnPos = {};
+        bool hasSpawnMarker = TryGetSpawnMarkerSpawnPoint(markerSpawnPos);
 
         // --- Spawn du personnage Roblox ---
         SceneObject player;
         player.Name = "Player";
         player.Type = PrimitiveType::Custom;
         player.MeshPath = "assets/models/roblox/baconHair1Tex.obj";
-        player.Position = m_CurrentMapSpawn;
+        player.Position = hasSpawnMarker ? markerSpawnPos : m_CurrentMapSpawn;
         player.Scale = m_CurrentPlayerScale;
         player.Mat.Diffuse = { 1.0f, 1.0f, 1.0f };  // blanc = texture pure
         player.Mat.Specular = { 0.3f, 0.3f, 0.3f };
@@ -444,6 +459,21 @@ public:
 
         // Forcer le chargement mesh + texture maintenant (pas au premier frame)
         GetMeshForObject(m_Objects[playerIdx]);
+        BuildPlayStaticColliders(playerIdx);
+        if (!hasSpawnMarker && m_EnableAutoSpawnSnap)
+            m_Objects[playerIdx].Position = ComputeGroundedSpawn(m_Objects[playerIdx].Position, m_Objects[playerIdx].Scale);
+        ResolvePlayerPhysics(m_Objects[playerIdx], 0.0f);
+        m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
+        m_PlayerOnGround = false;
+        PURR_CORE_INFO("Play spawn source={} colliders={} -> x:{:.3f} y:{:.3f} z:{:.3f}",
+            hasSpawnMarker ? "marker" : (m_EnableAutoSpawnSnap ? "autosnap" : "preset"),
+            (int)m_PlayStaticColliders.size(),
+            m_Objects[playerIdx].Position.x, m_Objects[playerIdx].Position.y, m_Objects[playerIdx].Position.z);
+        m_Camera.SetProjectionMode(Purr::ProjectionMode::Perspective);
+        m_Camera.SetOrbitAngles(m_PlayCamAzimuth, m_PlayCamElevation);
+        s_PlayCameraAzimuthDeg = m_PlayCamAzimuth;
+        m_Camera.SetRadius(m_PlayCamDistance);
+        m_Camera.SetTarget(m_Objects[playerIdx].Position + glm::vec3(0.0f, m_PlayCamTargetHeight, 0.0f));
 
 
         // Attacher le script de mouvement
@@ -463,10 +493,206 @@ public:
     {
         m_Objects = m_SavedScene;
         m_State = EngineState::Editor;
+        m_Camera.SetProjectionMode(m_SavedCamera.Mode);
+        m_Camera.SetOrbitAngles(m_SavedCamera.Azimuth, m_SavedCamera.Elevation);
+        m_Camera.SetRadius(m_SavedCamera.Radius);
+        m_Camera.SetTarget(m_SavedCamera.Target);
+        m_PlayStaticColliders.clear();
+        m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
+        m_PlayerOnGround = false;
         m_Selection.clear();
         m_Selected = m_Objects.empty() ? -1 : 0;
         if (m_Selected >= 0) m_Selection.insert(m_Selected);
 
+    }
+
+    void BuildPlayStaticColliders(int playerIdx)
+    {
+        m_PlayStaticColliders.clear();
+        for (int i = 0; i < (int)m_Objects.size(); i++) {
+            if (i == playerIdx) continue;
+            auto& obj = m_Objects[i];
+            if (obj.Type != PrimitiveType::Custom) {
+                if (obj.Type == PrimitiveType::Cube || obj.Type == PrimitiveType::Plane) {
+                    // Collider simple pour primitives editor (dont SpawnMarker).
+                    glm::vec3 half = (obj.Type == PrimitiveType::Cube)
+                        ? glm::vec3(0.5f, 0.5f, 0.5f) * obj.Scale
+                        : glm::vec3(0.5f * obj.Scale.x, 0.06f * glm::max(1.0f, obj.Scale.y), 0.5f * obj.Scale.z);
+                    glm::vec3 bmin = obj.Position - half;
+                    glm::vec3 bmax = obj.Position + half;
+                    if (bmin.x > bmax.x) std::swap(bmin.x, bmax.x);
+                    if (bmin.y > bmax.y) std::swap(bmin.y, bmax.y);
+                    if (bmin.z > bmax.z) std::swap(bmin.z, bmax.z);
+                    m_PlayStaticColliders.push_back({ bmin, bmax });
+                }
+                continue;
+            }
+
+            // S'assure que les parts sont chargées pour récupérer leurs bounds.
+            GetMeshForObject(obj);
+            if (obj.Parts.empty()) continue;
+
+            for (const auto& part : obj.Parts) {
+                glm::vec3 bmin = part.BoundsMin * obj.Scale + obj.Position;
+                glm::vec3 bmax = part.BoundsMax * obj.Scale + obj.Position;
+                if (bmin.x > bmax.x) std::swap(bmin.x, bmax.x);
+                if (bmin.y > bmax.y) std::swap(bmin.y, bmax.y);
+                if (bmin.z > bmax.z) std::swap(bmin.z, bmax.z);
+
+                // Les AABB de meshes non alignés deviennent trop larges:
+                // on réduit un peu en XZ pour éviter de bloquer loin des murs.
+                glm::vec3 size = bmax - bmin;
+                glm::vec3 shrink = {
+                    glm::min(size.x * m_ColliderShrinkXZ, 0.35f),
+                    0.0f,
+                    glm::min(size.z * m_ColliderShrinkXZ, 0.35f)
+                };
+                bmin += shrink;
+                bmax -= shrink;
+                if (bmin.x >= bmax.x || bmin.y >= bmax.y || bmin.z >= bmax.z)
+                    continue;
+
+                m_PlayStaticColliders.push_back({ bmin, bmax });
+            }
+        }
+    }
+
+    glm::vec3 ComputeGroundedSpawn(const glm::vec3& desiredSpawn, const glm::vec3& playerScale) const
+    {
+        float halfHeight = 0.42f * playerScale.y;
+        float probeRadius = glm::max(0.12f * playerScale.x, 0.08f);
+        bool found = false;
+        float bestTop = -FLT_MAX;
+        float bestScore = FLT_MAX;
+
+        for (const auto& c : m_PlayStaticColliders) {
+            bool overlapsXZ =
+                (desiredSpawn.x >= c.Min.x - probeRadius && desiredSpawn.x <= c.Max.x + probeRadius) &&
+                (desiredSpawn.z >= c.Min.z - probeRadius && desiredSpawn.z <= c.Max.z + probeRadius);
+            if (!overlapsXZ) continue;
+
+            float deltaY = c.Max.y - desiredSpawn.y;
+            if (deltaY < -m_AutoSpawnSearchHeight || deltaY > m_AutoSpawnSearchHeight)
+                continue;
+
+            float score = fabsf(deltaY);
+            if (score < bestScore) {
+                bestScore = score;
+                bestTop = c.Max.y;
+                found = true;
+            }
+        }
+
+        if (!found)
+            return desiredSpawn;
+
+        glm::vec3 snapped = desiredSpawn;
+        snapped.y = bestTop + halfHeight + m_AutoSpawnClearance;
+        return snapped;
+    }
+
+    bool TryGetSpawnMarkerSpawnPoint(glm::vec3& outSpawnPos) const
+    {
+        for (const auto& obj : m_Objects) {
+            if (obj.Name == "Player")
+                continue;
+
+            bool spawnTagged =
+                obj.Name.find("Spawn") != std::string::npos ||
+                obj.Name.find("spawn") != std::string::npos ||
+                obj.Name.find("SPAWN") != std::string::npos;
+            if (!spawnTagged)
+                continue;
+
+            glm::vec3 pos = obj.GetWorldPosition(m_Objects);
+            float markerHalfY = glm::abs(obj.Scale.y) * 0.5f;
+            float playerHalfY = glm::abs(m_CurrentPlayerScale.y) * 0.42f;
+            outSpawnPos = {
+                pos.x,
+                pos.y + markerHalfY + playerHalfY + m_AutoSpawnClearance,
+                pos.z
+            };
+            return true;
+        }
+        return false;
+    }
+
+    void ResolvePlayerPhysics(SceneObject& player, float dt)
+    {
+        glm::vec3 halfExtents = glm::vec3(0.14f, 0.42f, 0.14f) * player.Scale;
+        glm::vec3 pos = player.Position;
+
+        // 1) Vertical: gravité + résolution sol/plafond
+        m_PlayerVelocity.y += m_Gravity * dt;
+        pos.y += m_PlayerVelocity.y * dt;
+        m_PlayerOnGround = false;
+
+        for (const auto& c : m_PlayStaticColliders) {
+            bool overlapXZ =
+                (pos.x + halfExtents.x > c.Min.x && pos.x - halfExtents.x < c.Max.x) &&
+                (pos.z + halfExtents.z > c.Min.z && pos.z - halfExtents.z < c.Max.z);
+            if (!overlapXZ) continue;
+
+            float playerBottom = pos.y - halfExtents.y;
+            float playerTop = pos.y + halfExtents.y;
+            bool overlapY = (playerTop > c.Min.y && playerBottom < c.Max.y);
+            if (!overlapY) continue;
+
+            float penDown = playerTop - c.Min.y;      // collision plafond
+            float penUp = c.Max.y - playerBottom;     // collision sol
+
+            if (penUp < penDown) {
+                pos.y += penUp;
+                if (m_PlayerVelocity.y < 0.0f) {
+                    m_PlayerVelocity.y = 0.0f;
+                    m_PlayerOnGround = true;
+                }
+            }
+            else {
+                pos.y -= penDown;
+                if (m_PlayerVelocity.y > 0.0f)
+                    m_PlayerVelocity.y = 0.0f;
+            }
+        }
+
+        // 2) Horizontal X: murs
+        for (const auto& c : m_PlayStaticColliders) {
+            bool overlapYZ =
+                (pos.y + halfExtents.y > c.Min.y && pos.y - halfExtents.y < c.Max.y) &&
+                (pos.z + halfExtents.z > c.Min.z && pos.z - halfExtents.z < c.Max.z);
+            if (!overlapYZ) continue;
+            bool overlapX = (pos.x + halfExtents.x > c.Min.x && pos.x - halfExtents.x < c.Max.x);
+            if (!overlapX) continue;
+
+            float penLeft = (pos.x + halfExtents.x) - c.Min.x;
+            float penRight = c.Max.x - (pos.x - halfExtents.x);
+            if (penLeft < penRight) pos.x -= penLeft;
+            else                     pos.x += penRight;
+        }
+
+        // 3) Horizontal Z: murs
+        for (const auto& c : m_PlayStaticColliders) {
+            bool overlapXY =
+                (pos.x + halfExtents.x > c.Min.x && pos.x - halfExtents.x < c.Max.x) &&
+                (pos.y + halfExtents.y > c.Min.y && pos.y - halfExtents.y < c.Max.y);
+            if (!overlapXY) continue;
+            bool overlapZ = (pos.z + halfExtents.z > c.Min.z && pos.z - halfExtents.z < c.Max.z);
+            if (!overlapZ) continue;
+
+            float penBack = (pos.z + halfExtents.z) - c.Min.z;
+            float penFront = c.Max.z - (pos.z - halfExtents.z);
+            if (penBack < penFront) pos.z -= penBack;
+            else                    pos.z += penFront;
+        }
+
+        player.Position = pos;
+    }
+
+    void UpdatePlayCamera(const SceneObject& player, float dt)
+    {
+        glm::vec3 desiredTarget = player.Position + glm::vec3(0.0f, m_PlayCamTargetHeight, 0.0f);
+        glm::vec3 smoothed = glm::mix(m_Camera.GetTarget(), desiredTarget, glm::clamp(dt * m_PlayCamFollowSpeed, 0.0f, 1.0f));
+        m_Camera.SetTarget(smoothed);
     }
 
 
@@ -537,6 +763,25 @@ public:
                         m_Selection.insert((int)m_Objects.size() - 1);
                     }
                     m_Selected = *m_Selection.begin();
+                }
+            }
+
+            // Déplacement caméra editor (WASD + Q/E) quand le viewport est actif.
+            if (m_ViewportHovered && !io.WantTextInput)
+            {
+                glm::vec3 camMove = { 0.0f, 0.0f, 0.0f };
+                float az = glm::radians(m_Camera.GetAzimuth());
+                glm::vec3 forward = glm::normalize(glm::vec3(-cosf(az), 0.0f, -sinf(az)));
+                glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0, 1, 0)));
+                if (ImGui::IsKeyDown(ImGuiKey_W)) camMove += forward;
+                if (ImGui::IsKeyDown(ImGuiKey_S)) camMove -= forward;
+                if (ImGui::IsKeyDown(ImGuiKey_A)) camMove -= right;
+                if (ImGui::IsKeyDown(ImGuiKey_D)) camMove += right;
+                if (ImGui::IsKeyDown(ImGuiKey_E)) camMove.y += 1.0f;
+                if (ImGui::IsKeyDown(ImGuiKey_Q)) camMove.y -= 1.0f;
+                if (glm::length(camMove) > 0.0f) {
+                    float speed = glm::max(2.0f, m_Camera.GetRadius() * 1.2f);
+                    m_Camera.SetTarget(m_Camera.GetTarget() + glm::normalize(camMove) * speed * dt);
                 }
             }
 
@@ -682,12 +927,27 @@ public:
 
 
         } // fin du mode Editor *_*
+        else if (m_State == EngineState::Playing)
+        {
+            // Orbit camera en Play pour explorer la map.
+            if (m_ViewportHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
+                m_Camera.Orbit(io.MouseDelta.x * 0.4f, -io.MouseDelta.y * 0.4f);
+            s_PlayCameraAzimuthDeg = m_Camera.GetAzimuth();
+        }
 
         // Scripts — seulement en Play mode
         if (m_State == EngineState::Playing)
         {
             for (auto& obj : m_Objects)
                 if (obj.Script) obj.Script->OnUpdate(dt);
+
+            for (auto& obj : m_Objects) {
+                if (obj.Name == "Player") {
+                    ResolvePlayerPhysics(obj, dt);
+                    UpdatePlayCamera(obj, dt);
+                    break;
+                }
+            }
         }
 
 
@@ -1148,7 +1408,7 @@ public:
 
         const MapPreset mapPresets[] = {
             { "MM2", "assets/models/roblox/mm2/mm2map1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 0.8f, 0.0f}, {1.1f, 1.1f, 1.1f} },
-            { "Island", "assets/models/roblox/island/island1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 1.0f, 0.0f}, {1.2f, 1.2f, 1.2f} },
+            { "Island", "assets/models/roblox/island/island1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, -0.210f, -0.187f}, {0.368f, 0.368f, 0.368f} },
             { "Doomspires", "assets/models/roblox/doomspires/doomspires1Tex.obj", {0.0f, 0.0f, 0.0f}, {18.0f, 18.0f, 18.0f}, {0.0f, 1.2f, 0.0f}, {1.3f, 1.3f, 1.3f} },
         };
 
@@ -1158,17 +1418,58 @@ public:
             ImGui::SameLine();
         }
         ImGui::NewLine();
+        if (ImGui::Button("Ajouter Spawn Marker", ImVec2(180.0f, 0.0f))) {
+            SceneObject marker;
+            marker.Name = "SpawnMarker";
+            marker.Type = PrimitiveType::Cube;
+            marker.Position = m_CurrentMapSpawn;
+            marker.Scale = { 0.6f, 0.12f, 0.6f };
+            marker.Mat.Diffuse = { 0.2f, 1.0f, 0.2f };
+            SaveSnapshot();
+            m_Objects.push_back(marker);
+            m_Selected = (int)m_Objects.size() - 1;
+            m_Selection.clear();
+            m_Selection.insert(m_Selected);
+        }
         if (!m_CurrentMapName.empty())
             ImGui::TextColored({ 0.6f, 1.0f, 0.6f, 1.0f }, "Map chargee : %s", m_CurrentMapName.c_str());
+        glm::vec3 markerPos = {};
+        if (TryGetSpawnMarkerSpawnPoint(markerPos))
+            ImGui::TextColored({ 0.6f, 1.0f, 0.6f, 1.0f }, "Spawn marker detecte: %.3f, %.3f, %.3f", markerPos.x, markerPos.y, markerPos.z);
+        else
+            ImGui::TextDisabled("Aucun SpawnMarker detecte (fallback preset/autosnap).");
         if (!m_CurrentMapName.empty()) {
             ImGui::Text("Spawn joueur (preset)");
             ImGui::DragFloat3("##map_spawn_player", glm::value_ptr(m_CurrentMapSpawn), 0.05f);
             ImGui::Text("Scale joueur (preset)");
             ImGui::DragFloat3("##map_scale_player", glm::value_ptr(m_CurrentPlayerScale), 0.01f, 0.1f, 10.0f);
+            ImGui::Checkbox("Auto spawn snap au sol", &m_EnableAutoSpawnSnap);
+            ImGui::DragFloat("Spawn search height", &m_AutoSpawnSearchHeight, 0.1f, 0.2f, 50.0f);
+            ImGui::DragFloat("Spawn clearance", &m_AutoSpawnClearance, 0.01f, 0.0f, 1.0f);
+            ImGui::Separator();
+            ImGui::Text("Play camera");
+            ImGui::DragFloat("Distance", &m_PlayCamDistance, 0.05f, 2.0f, 30.0f);
+            ImGui::DragFloat("Azimuth", &m_PlayCamAzimuth, 0.5f, -180.0f, 180.0f);
+            ImGui::DragFloat("Elevation", &m_PlayCamElevation, 0.5f, -45.0f, 80.0f);
+            ImGui::DragFloat("Target Height", &m_PlayCamTargetHeight, 0.02f, 0.0f, 4.0f);
+            ImGui::DragFloat("Follow Speed", &m_PlayCamFollowSpeed, 0.1f, 1.0f, 30.0f);
+            ImGui::Separator();
+            ImGui::Text("Collision");
+            ImGui::SliderFloat("Collider Shrink XZ", &m_ColliderShrinkXZ, 0.0f, 0.35f);
             ImGui::TextDisabled("Ces valeurs seront utilisees au prochain Play.");
         }
 
         if (m_State == EngineState::Playing) ImGui::EndDisabled();
+
+        if (m_State == EngineState::Playing) {
+            for (const auto& obj : m_Objects) {
+                if (obj.Name == "Player") {
+                    ImGui::Text("Player live pos: %.3f, %.3f, %.3f",
+                        obj.Position.x, obj.Position.y, obj.Position.z);
+                    break;
+                }
+            }
+        }
 
 
         // ---- Histogramme --------------------------------------------------
@@ -1536,6 +1837,21 @@ private:
         std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
         std::string TexPath;
         glm::vec3 DiffuseTint = glm::vec3(1.0f);
+        glm::vec3 BoundsMin = glm::vec3(0.0f);
+        glm::vec3 BoundsMax = glm::vec3(0.0f);
+    };
+
+    struct StaticColliderAABB {
+        glm::vec3 Min = glm::vec3(0.0f);
+        glm::vec3 Max = glm::vec3(0.0f);
+    };
+
+    struct SavedCameraState {
+        Purr::ProjectionMode Mode = Purr::ProjectionMode::Perspective;
+        glm::vec3 Target = { 0.0f, 0.0f, 0.0f };
+        float Radius = 5.0f;
+        float Azimuth = 45.0f;
+        float Elevation = 25.0f;
     };
 
     std::shared_ptr<Purr::VertexArray> GetMeshForObject(SceneObject& obj)
@@ -1552,6 +1868,8 @@ private:
                     part.Mesh = cachedPart.Mesh;
                     part.TexturePath = cachedPart.TexPath;
                     part.DiffuseTint = cachedPart.DiffuseTint;
+                    part.BoundsMin = cachedPart.BoundsMin;
+                    part.BoundsMax = cachedPart.BoundsMax;
                     if (!part.TexturePath.empty())
                         part.Texture = Purr::TextureManager::Load(part.TexturePath);
                     obj.Parts.push_back(part);
@@ -1597,12 +1915,16 @@ private:
                     cachePart.Mesh = sm.Mesh;
                     cachePart.TexPath = sm.TexturePath;
                     cachePart.DiffuseTint = sm.DiffuseTint;
+                    cachePart.BoundsMin = sm.BoundsMin;
+                    cachePart.BoundsMax = sm.BoundsMax;
                     cachedParts.push_back(cachePart);
 
                     SceneObject::RenderPart part;
                     part.Mesh = sm.Mesh;
                     part.TexturePath = sm.TexturePath;
                     part.DiffuseTint = sm.DiffuseTint;
+                    part.BoundsMin = sm.BoundsMin;
+                    part.BoundsMax = sm.BoundsMax;
                     if (!part.TexturePath.empty())
                         part.Texture = Purr::TextureManager::Load(part.TexturePath);
                     obj.Parts.push_back(part);
@@ -2283,6 +2605,20 @@ private:
     enum class EngineState { Editor, Playing };
     EngineState              m_State = EngineState::Editor;
     std::vector<SceneObject> m_SavedScene;
+    std::vector<StaticColliderAABB> m_PlayStaticColliders;
+    glm::vec3                     m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
+    bool                          m_PlayerOnGround = false;
+    float                         m_Gravity = -18.0f;
+    float                         m_ColliderShrinkXZ = 0.12f;
+    bool                          m_EnableAutoSpawnSnap = true;
+    float                         m_AutoSpawnSearchHeight = 8.0f;
+    float                         m_AutoSpawnClearance = 0.02f;
+    SavedCameraState              m_SavedCamera;
+    float                         m_PlayCamDistance = 6.0f;
+    float                         m_PlayCamAzimuth = 35.0f;
+    float                         m_PlayCamElevation = 20.0f;
+    float                         m_PlayCamTargetHeight = 0.9f;
+    float                         m_PlayCamFollowSpeed = 10.0f;
 };
 
 // -----------------------------------------------------------------------

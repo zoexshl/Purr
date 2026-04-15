@@ -15,6 +15,12 @@ namespace Purr {
         void SetAspectRatio(float ratio);
         void Orbit(float deltaAzimuth, float deltaElevation);
         void Zoom(float delta);
+        void SetTarget(const glm::vec3& target);
+        const glm::vec3& GetTarget() const { return m_Target; }
+        void SetRadius(float radius);
+        void SetOrbitAngles(float azimuth, float elevation);
+        float GetAzimuth() const { return m_Azimuth; }
+        float GetElevation() const { return m_Elevation; }
 
         const glm::mat4& GetViewMatrix()       const { return m_View; }
         const glm::mat4& GetProjectionMatrix() const { return m_Projection; }

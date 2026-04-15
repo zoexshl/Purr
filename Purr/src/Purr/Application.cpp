@@ -51,7 +51,13 @@ namespace Purr {
 
 		dispatcher.Dispatch<WindowCloseEvent>(BIND_EVENT_FN(Application::OnWindowClose));
 
-		PURR_CORE_TRACE("{0}", e);
+		// Evite de spammer le terminal avec les événements d'input très fréquents.
+		if (e.GetEventType() != EventType::MouseMoved &&
+			e.GetEventType() != EventType::MouseButtonReleased &&
+			e.GetEventType() != EventType::MouseButtonPressed &&
+			e.GetEventType() != EventType::KeyPressed &&
+			e.GetEventType() != EventType::KeyReleased)
+			PURR_CORE_TRACE("{0}", e);
 
 		for (auto it = m_LayerStack.end(); it != m_LayerStack.begin();)
 		{

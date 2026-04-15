@@ -39,6 +39,27 @@ namespace Purr {
             RecalculateProjection();
     }
 
+    void Camera::SetTarget(const glm::vec3& target)
+    {
+        m_Target = target;
+        RecalculateView();
+    }
+
+    void Camera::SetRadius(float radius)
+    {
+        m_Radius = glm::max(radius, 0.5f);
+        RecalculateView();
+        if (m_Mode == ProjectionMode::Orthographic)
+            RecalculateProjection();
+    }
+
+    void Camera::SetOrbitAngles(float azimuth, float elevation)
+    {
+        m_Azimuth = azimuth;
+        m_Elevation = glm::clamp(elevation, -89.0f, 89.0f);
+        RecalculateView();
+    }
+
     void Camera::RecalculateView()
     {
         float az = glm::radians(m_Azimuth);
