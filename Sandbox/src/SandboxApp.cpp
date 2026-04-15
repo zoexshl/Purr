@@ -566,24 +566,40 @@ public:
 
                 // Les AABB de meshes non alignés deviennent trop larges:
                 // on réduit un peu en XZ pour éviter de bloquer loin des murs.
-                glm::vec3 size = bmax - bmin;
+                glm::vec3 szPre = bmax - bmin;
                 glm::vec3 shrink = {
-                    glm::min(size.x * m_ColliderShrinkXZ, 0.35f),
+                    glm::min(szPre.x * m_ColliderShrinkXZ, 0.35f),
                     0.0f,
-                    glm::min(size.z * m_ColliderShrinkXZ, 0.35f)
+                    glm::min(szPre.z * m_ColliderShrinkXZ, 0.35f)
                 };
                 bmin += shrink;
                 bmax -= shrink;
                 if (bmin.x >= bmax.x || bmin.y >= bmax.y || bmin.z >= bmax.z)
                     continue;
 
-                glm::vec3 sizeAfterShrink = bmax - bmin;
-                float minHoriz = glm::min(sizeAfterShrink.x, sizeAfterShrink.z);
-                bool isFloor = (sizeAfterShrink.y < minHoriz * m_FloorAspectThreshold);
+                glm::vec3 size = bmax - bmin;
+                float minHoriz = glm::min(size.x, size.z);
+
+                // Seuil strict : plancher = très plat par rapport à son étendue horizontale
+                bool isFloor = (size.y > 0.001f) && (size.y < minHoriz * m_FloorAspectThreshold);
+
+                if (isFloor) {
+                    // Thin slab au top — évite le cas « joueur à l'intérieur » d'un gros union
+                    float topY = bmax.y;
+                    bmin.y = topY - glm::min(0.4f, size.y * 0.5f);
+                    bmax.y = topY;
+                }
 
                 m_PlayStaticColliders.push_back({ bmin, bmax, isFloor });
             }
         }
+
+        int nFloor = 0, nWall = 0;
+        for (const auto& c : m_PlayStaticColliders) {
+            if (c.IsFloor) nFloor++;
+            else           nWall++;
+        }
+        PURR_CORE_INFO("Colliders built: {} planchers, {} murs", nFloor, nWall);
     }
 
     glm::vec3 ComputeGroundedSpawn(const glm::vec3& desiredSpawn, const glm::vec3& playerScale) const
@@ -614,6 +630,11 @@ public:
                 found = true;
             }
         }
+
+        if (found)
+            PURR_CORE_INFO("GroundedSpawn: plancher trouve a y={:.3f} -> spawn y={:.3f}", bestTop, bestTop + halfHeight + m_AutoSpawnClearance);
+        else
+            PURR_CORE_INFO("GroundedSpawn: aucun plancher trouve sous spawn y={:.3f}", desiredSpawn.y);
 
         if (!found)
             return desiredSpawn;
@@ -1328,6 +1349,15 @@ public:
 
         // ---- Scene --------------------------------------------------------
         ImGui::Begin("Scene");
+        {
+            const char* themeLabels[] = { "Sombre + rose / mauve", "Sombre (classique)" };
+            if (ImGui::Combo("Theme UI", &m_ImGuiThemeIndex, themeLabels, 2)) {
+                Purr::ApplyImGuiTheme(m_ImGuiThemeIndex == 0
+                    ? Purr::ImGuiThemeKind::DarkPink
+                    : Purr::ImGuiThemeKind::DarkClassic);
+            }
+            ImGui::Separator();
+        }
         bool isPersp = (m_Camera.GetProjectionMode() == Purr::ProjectionMode::Perspective);
         if (ImGui::RadioButton("Perspective", isPersp))  m_Camera.SetProjectionMode(Purr::ProjectionMode::Perspective);
         ImGui::SameLine();
@@ -1517,7 +1547,7 @@ public:
             ImGui::Separator();
             ImGui::Text("Collision");
             ImGui::SliderFloat("Collider Shrink XZ", &m_ColliderShrinkXZ, 0.0f, 0.35f);
-            ImGui::SliderFloat("Floor Aspect Threshold", &m_FloorAspectThreshold, 0.2f, 2.0f);
+            ImGui::SliderFloat("Floor flatness (h / min XZ)", &m_FloorAspectThreshold, 0.05f, 0.5f);
             ImGui::TextDisabled("Ces valeurs seront utilisees au prochain Play.");
         }
 
@@ -2673,7 +2703,7 @@ private:
     bool                          m_PlayerOnGround = false;
     float                         m_Gravity = -18.0f;
     float                         m_ColliderShrinkXZ = 0.12f;
-    float                         m_FloorAspectThreshold = 0.75f;
+    float                         m_FloorAspectThreshold = 0.20f;
     bool                          m_EnableAutoSpawnSnap = true;
     float                         m_AutoSpawnSearchHeight = 8.0f;
     float                         m_AutoSpawnClearance = 0.02f;
@@ -2683,6 +2713,7 @@ private:
     float                         m_PlayCamElevation = 20.0f;
     float                         m_PlayCamTargetHeight = 0.9f;
     float                         m_PlayCamFollowSpeed = 10.0f;
+    int                           m_ImGuiThemeIndex = 0;
 };
 
 // -----------------------------------------------------------------------

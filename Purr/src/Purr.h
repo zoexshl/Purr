@@ -10,6 +10,7 @@
 #include "Purr/MouseButtonCodes.h"
 
 #include "Purr/ImGui/ImGuiLayer.h"
+#include "Purr/ImGui/ImGuiTheme.h"
 
 // *** Entry Point ***************************
 #include "Purr/EntryPoint.h"

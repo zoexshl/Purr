@@ -1,5 +1,6 @@
 #include "purrpch.h"
 #include "ImGuiLayer.h"
+#include "ImGuiTheme.h"
 
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
@@ -16,7 +17,7 @@ namespace Purr {
     {
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
-        ImGui::StyleColorsDark();
+        ApplyImGuiTheme(ImGuiThemeKind::DarkPink);
 
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;

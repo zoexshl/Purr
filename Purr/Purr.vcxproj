@@ -166,6 +166,7 @@
     <ClInclude Include="src\Purr\Events\KeyEvent.h" />
     <ClInclude Include="src\Purr\Events\MouseEvent.h" />
     <ClInclude Include="src\Purr\ImGui\ImGuiLayer.h" />
+    <ClInclude Include="src\Purr\ImGui\ImGuiTheme.h" />
     <ClInclude Include="src\Purr\Input.h" />
     <ClInclude Include="src\Purr\KeyCodes.h" />
     <ClInclude Include="src\Purr\Layer.h" />
@@ -611,6 +612,7 @@
     <ClCompile Include="src\Purr\Application.cpp" />
     <ClCompile Include="src\Purr\ImGui\ImGuiBuild.cpp" />
     <ClCompile Include="src\Purr\ImGui\ImGuiLayer.cpp" />
+    <ClCompile Include="src\Purr\ImGui\ImGuiTheme.cpp" />
     <ClCompile Include="src\Purr\Layer.cpp" />
     <ClCompile Include="src\Purr\LayerStack.cpp" />
     <ClCompile Include="src\Purr\Log.cpp" />

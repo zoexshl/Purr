@@ -84,6 +84,9 @@
     <ClInclude Include="src\Purr\ImGui\ImGuiLayer.h">
       <Filter>src\Purr\ImGui</Filter>
     </ClInclude>
+    <ClInclude Include="src\Purr\ImGui\ImGuiTheme.h">
+      <Filter>src\Purr\ImGui</Filter>
+    </ClInclude>
     <ClInclude Include="src\Purr\Input.h">
       <Filter>src\Purr</Filter>
     </ClInclude>
@@ -1413,6 +1416,9 @@
       <Filter>src\Purr\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\ImGui\ImGuiLayer.cpp">
+      <Filter>src\Purr\ImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\ImGui\ImGuiTheme.cpp">
       <Filter>src\Purr\ImGui</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\Layer.cpp">
