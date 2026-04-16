@@ -39,8 +39,8 @@ static std::string OpenFileDialog(const char* filter = "All Files\0*.*\0")
 enum class IlluminationModel { Lambert = 0, Phong, BlinnPhong };
 static const char* s_ModelNames[] = { "Lambert", "Phong", "Blinn-Phong" };
 
-enum class PrimitiveType { Cube = 0, Plane, Triangle, Circle, RegularPolygon, Ellipse, Sphere, Custom, Folder };
-static const char* s_PrimNames[] = { "Cube", "Plan", "Triangle", "Cercle", "Polygone regulier", "Ellipse", "Sphere", "Modele OBJ", "Dossier" };
+enum class PrimitiveType { Cube = 0, Plane, Triangle, Circle, RegularPolygon, Ellipse, Sphere, Custom, Folder, PolarMarker };
+static const char* s_PrimNames[] = { "Cube", "Plan", "Triangle", "Cercle", "Polygone regulier", "Ellipse", "Sphere", "Modele OBJ", "Dossier", "Marqueur (polaire)" };
 
 struct Light {
     glm::vec3 Position = { 0.0f, 3.0f, 0.0f };
@@ -91,6 +91,9 @@ struct SceneObject {
     bool IsColliderOnly = false;
     bool HiddenInHierarchy = false;
     float Opacity = 1.0f;
+    /** Coordonnees cylindriques (plan XZ) : x = r*cos(theta), z = r*sin(theta), y = hauteur. Utilise si Type == PolarMarker. */
+    float PolarRadius = 0.0f;
+    float PolarThetaDeg = 0.0f;
 
     SceneObject(const SceneObject& o)
         : Name(o.Name), ParentIndex(o.ParentIndex)  // copier ParentIndex
@@ -98,6 +101,7 @@ struct SceneObject {
         , Mat(o.Mat), Type(o.Type), Tex(o.Tex), TexPath(o.TexPath), MeshPath(o.MeshPath), Parts(o.Parts)
         , TexTiling(o.TexTiling), IsColliderOnly(o.IsColliderOnly)
         , HiddenInHierarchy(o.HiddenInHierarchy), Opacity(o.Opacity)
+        , PolarRadius(o.PolarRadius), PolarThetaDeg(o.PolarThetaDeg)
         , Script(nullptr) {
     }
 
@@ -109,12 +113,33 @@ struct SceneObject {
         IsColliderOnly = o.IsColliderOnly;
         HiddenInHierarchy = o.HiddenInHierarchy;
         Opacity = o.Opacity;
+        PolarRadius = o.PolarRadius;
+        PolarThetaDeg = o.PolarThetaDeg;
         Script = nullptr; return *this;
     }
     SceneObject() = default;
 
+    void PolarSyncCartesianFromPolar() {
+        if (Type != PrimitiveType::PolarMarker) return;
+        const float th = glm::radians(PolarThetaDeg);
+        Position.x = PolarRadius * cosf(th);
+        Position.z = PolarRadius * sinf(th);
+    }
+
+    void PolarSyncPolarFromCartesianXZ() {
+        if (Type != PrimitiveType::PolarMarker) return;
+        PolarRadius = sqrtf(Position.x * Position.x + Position.z * Position.z);
+        PolarThetaDeg = glm::degrees(atan2f(Position.z, Position.x));
+    }
+
     glm::mat4 GetTransform() const {
-        glm::mat4 t = glm::translate(glm::mat4(1.0f), Position);
+        glm::vec3 pos = Position;
+        if (Type == PrimitiveType::PolarMarker) {
+            const float th = glm::radians(PolarThetaDeg);
+            pos.x = PolarRadius * cosf(th);
+            pos.z = PolarRadius * sinf(th);
+        }
+        glm::mat4 t = glm::translate(glm::mat4(1.0f), pos);
         t = glm::rotate(t, glm::radians(Rotation.x), { 1,0,0 });
         t = glm::rotate(t, glm::radians(Rotation.y), { 0,1,0 });
         t = glm::rotate(t, glm::radians(Rotation.z), { 0,0,1 });
@@ -321,7 +346,7 @@ public:
 
     void DrawHierarchyNode(int i)
     {
-        static const char* s_TypeIcons[] = { "[C]","[P]","[T]","[O]","[N]","[E]","[S]","[M]","[D]" };
+        static const char* s_TypeIcons[] = { "[C]","[P]","[T]","[O]","[N]","[E]","[S]","[M]","[D]","[@]" };
         ImGui::PushID(i);
 
         if (m_Objects[i].HiddenInHierarchy && !m_ShowHiddenInSceneList) {
@@ -355,7 +380,7 @@ public:
                 ImGui::SetTooltip("Afficher / masquer dans cette liste (comme Blender)");
             ImGui::SameLine();
 
-            const char* icon = (int)m_Objects[i].Type < 9 ? s_TypeIcons[(int)m_Objects[i].Type] : "[?]";
+            const char* icon = (int)m_Objects[i].Type < 10 ? s_TypeIcons[(int)m_Objects[i].Type] : "[?]";
             std::string label = std::string(icon) + "  " + m_Objects[i].Name;
 
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow;
@@ -600,12 +625,19 @@ public:
             if (obj.Type == PrimitiveType::Custom || obj.Type == PrimitiveType::Folder)
                 continue;
 
-            if (obj.Type == PrimitiveType::Cube || obj.Type == PrimitiveType::Plane) {
-                glm::vec3 half = (obj.Type == PrimitiveType::Cube)
-                    ? glm::vec3(0.5f, 0.5f, 0.5f) * obj.Scale
-                    : glm::vec3(0.5f * obj.Scale.x, 0.06f * glm::max(1.0f, obj.Scale.y), 0.5f * obj.Scale.z);
-                glm::vec3 bmin = obj.Position - half;
-                glm::vec3 bmax = obj.Position + half;
+            glm::vec3 objCenter = obj.Position;
+            if (obj.Type == PrimitiveType::PolarMarker) {
+                const float th = glm::radians(obj.PolarThetaDeg);
+                objCenter.x = obj.PolarRadius * cosf(th);
+                objCenter.z = obj.PolarRadius * sinf(th);
+            }
+
+            if (obj.Type == PrimitiveType::Cube || obj.Type == PrimitiveType::Plane || obj.Type == PrimitiveType::PolarMarker) {
+                glm::vec3 half = (obj.Type == PrimitiveType::Plane)
+                    ? glm::vec3(0.5f * obj.Scale.x, 0.06f * glm::max(1.0f, obj.Scale.y), 0.5f * obj.Scale.z)
+                    : glm::vec3(0.5f, 0.5f, 0.5f) * obj.Scale;
+                glm::vec3 bmin = objCenter - half;
+                glm::vec3 bmax = objCenter + half;
                 if (bmin.x > bmax.x) std::swap(bmin.x, bmax.x);
                 if (bmin.y > bmax.y) std::swap(bmin.y, bmax.y);
                 if (bmin.z > bmax.z) std::swap(bmin.z, bmax.z);
@@ -1020,8 +1052,11 @@ public:
                     {
                         float t = glm::dot(delta, screenAxis / screenLen) / screenLen;
                         glm::vec3 move = axisDir * t;
-                        for (int idx : m_Selection)
+                        for (int idx : m_Selection) {
                             m_Objects[idx].Position += move;
+                            if (m_Objects[idx].Type == PrimitiveType::PolarMarker)
+                                m_Objects[idx].PolarSyncPolarFromCartesianXZ();
+                        }
                     }
                 }
                 else if (m_GizmoMode == GizmoMode::Rotate)
@@ -1623,6 +1658,7 @@ public:
                 { "Ellipse",           PrimitiveType::Ellipse       },
                 { "Sphere",            PrimitiveType::Sphere        },
                 { "Dossier",           PrimitiveType::Folder        },
+                { "Marqueur (polaire)", PrimitiveType::PolarMarker  },
             };
             for (auto& e : entries)
             {
@@ -1635,6 +1671,13 @@ public:
                     obj.Type = e.type;
                     obj.Mat.Diffuse = { (float)rand() / RAND_MAX,(float)rand() / RAND_MAX,(float)rand() / RAND_MAX };
                     if (e.type == PrimitiveType::Plane) { obj.Scale = { 3,1,3 }; obj.Position = { 0,-0.5f,0 }; }
+                    else if (e.type == PrimitiveType::PolarMarker) {
+                        obj.PolarRadius = 2.0f;
+                        obj.PolarThetaDeg = 0.0f;
+                        obj.Position = { 0.0f, 0.0f, 0.0f };
+                        obj.Scale = { 0.25f, 0.25f, 0.25f };
+                        obj.PolarSyncCartesianFromPolar();
+                    }
                     SaveSnapshot();
                     m_Objects.push_back(obj);
                     m_Selected = (int)m_Objects.size() - 1;
@@ -1726,6 +1769,7 @@ public:
         ImGui::Separator();
         ImGui::Text("Maps (presets)");
         ImGui::TextDisabled("Charge une map Roblox preconfiguree.");
+        ImGui::TextDisabled("Coords. non cartesiennes : + Add > Marqueur (polaire) — repere (r, theta, Y).");
         if (m_State == EngineState::Playing) ImGui::BeginDisabled();
 
         const MapPreset mapPresets[] = {
@@ -1896,8 +1940,26 @@ public:
             ImGui::Begin("Properties");
             ImGui::Text("%s", obj.Name.c_str());
             ImGui::Separator();
-            ImGui::DragFloat3("Position", glm::value_ptr(obj.Position), 0.05f);
-            if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
+            if (obj.Type == PrimitiveType::PolarMarker) {
+                ImGui::TextDisabled("Position (cylindrique) : rayon r, angle theta, hauteur Y.");
+                if (ImGui::DragFloat("Rayon r", &obj.PolarRadius, 0.05f, 0.0f, 500.0f))
+                    obj.PolarSyncCartesianFromPolar();
+                if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
+                if (ImGui::DragFloat("Theta (deg)", &obj.PolarThetaDeg, 0.5f, -720.0f, 720.0f))
+                    obj.PolarSyncCartesianFromPolar();
+                if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
+                if (ImGui::DragFloat("Hauteur Y", &obj.Position.y, 0.05f))
+                    obj.PolarSyncCartesianFromPolar();
+                if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
+                float th = glm::radians(obj.PolarThetaDeg);
+                float px = obj.PolarRadius * cosf(th);
+                float pz = obj.PolarRadius * sinf(th);
+                ImGui::TextDisabled("Equiv. cartesien (XZ derive) : %.3f, %.3f", px, pz);
+            }
+            else {
+                ImGui::DragFloat3("Position", glm::value_ptr(obj.Position), 0.05f);
+                if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
+            }
             ImGui::DragFloat3("Rotation", glm::value_ptr(obj.Rotation), 0.5f);
             if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
             ImGui::DragFloat3("Scale", glm::value_ptr(obj.Scale), 0.01f, 0.01f, 10.0f);
@@ -1912,6 +1974,8 @@ public:
                 SaveSnapshot();
             ImGui::Separator();
             if (obj.Type != PrimitiveType::Folder) {
+                if (obj.Type == PrimitiveType::PolarMarker)
+                    ImGui::TextDisabled("Repere cylindrique (r, theta, Y) — transforme monde en cartesien pour le rendu.");
                 ImGui::Text("Texture");
                 if (obj.Tex && !obj.TexPath.empty()) {
                     std::string fn = obj.TexPath.substr(obj.TexPath.find_last_of("/\\") + 1);
@@ -2096,6 +2160,8 @@ public:
         j["objects"] = json::array();
         for (auto& obj : m_Objects)
         {
+            if (obj.Type == PrimitiveType::PolarMarker)
+                obj.PolarSyncCartesianFromPolar();
             json o;
             o["name"] = obj.Name;
             o["type"] = (int)obj.Type;
@@ -2111,6 +2177,10 @@ public:
             o["colliderOnly"] = obj.IsColliderOnly;
             o["hiddenInList"] = obj.HiddenInHierarchy;
             o["opacity"] = obj.Opacity;
+            if (obj.Type == PrimitiveType::PolarMarker) {
+                o["polarRadius"] = obj.PolarRadius;
+                o["polarThetaDeg"] = obj.PolarThetaDeg;
+            }
             j["objects"].push_back(o);
         }
         std::ofstream f(path);
@@ -2148,7 +2218,7 @@ public:
             SceneObject obj;
             obj.Name = o["name"];
             int typeInt = o.value("type", 0);
-            typeInt = glm::clamp(typeInt, 0, (int)PrimitiveType::Folder);
+            typeInt = glm::clamp(typeInt, 0, (int)PrimitiveType::PolarMarker);
             obj.Type = (PrimitiveType)typeInt;
             obj.MeshPath = o.value("meshPath", "");
             obj.TexPath = o.value("texPath", "");
@@ -2162,6 +2232,20 @@ public:
             obj.IsColliderOnly = o.value("colliderOnly", false);
             obj.HiddenInHierarchy = o.value("hiddenInList", false);
             obj.Opacity = o.value("opacity", 1.0f);
+            if (obj.Type == PrimitiveType::PolarMarker) {
+                if (o.contains("polarRadius")) {
+                    obj.PolarRadius = o["polarRadius"].get<float>();
+                    obj.PolarThetaDeg = o.value("polarThetaDeg", 0.0f);
+                } else {
+                    obj.PolarRadius = sqrtf(obj.Position.x * obj.Position.x + obj.Position.z * obj.Position.z);
+                    obj.PolarThetaDeg = glm::degrees(atan2f(obj.Position.z, obj.Position.x));
+                }
+                obj.PolarSyncCartesianFromPolar();
+            }
+            else {
+                obj.PolarRadius = o.value("polarRadius", 0.0f);
+                obj.PolarThetaDeg = o.value("polarThetaDeg", 0.0f);
+            }
             if (!obj.TexPath.empty())
                 obj.Tex = Purr::TextureManager::Load(obj.TexPath);
             m_Objects.push_back(obj);
@@ -2341,6 +2425,7 @@ private:
         case PrimitiveType::RegularPolygon:return m_RegPolygonVA;
         case PrimitiveType::Ellipse:       return m_EllipseVA;
         case PrimitiveType::Sphere:        return m_SphereVA;
+        case PrimitiveType::PolarMarker:  return m_SphereVA;
         default:                           return m_VA; // Cube
         }
     }
