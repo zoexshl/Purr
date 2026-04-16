@@ -2101,6 +2101,29 @@ public:
                 if (o.HasAnimation && !o.AnimationKeys.empty())
                     o.AnimationPlaying = true;
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Stop toutes anims", ImVec2(150.0f, 0.0f))) {
+            for (auto& o : m_Objects)
+                if (o.HasAnimation) {
+                    o.AnimationPlaying = false;
+                    if (!o.AnimationKeys.empty())
+                        o.AnimationTime = o.AnimationKeys.front().Time;
+                }
+        }
+        if (ImGui::Button("Supprimer demos", ImVec2(220.0f, 0.0f))) {
+            SaveSnapshot();
+            std::vector<int> toErase;
+            for (int i = 0; i < (int)m_Objects.size(); ++i) {
+                if (m_Objects[i].Name.find("AnimChild Demo") != std::string::npos)
+                    toErase.push_back(i);
+            }
+            std::sort(toErase.rbegin(), toErase.rend());
+            for (int idx : toErase)
+                m_Objects.erase(m_Objects.begin() + idx);
+            m_Selection.clear();
+            m_Selected = m_Objects.empty() ? -1 : 0;
+            if (m_Selected >= 0) m_Selection.insert(m_Selected);
+        }
         ImGui::TextDisabled("Selectionne un objet parent, puis 'Generer demo' pour creer parent+enfant animes.");
         ImGui::Separator();
 
