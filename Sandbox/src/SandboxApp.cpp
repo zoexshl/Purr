@@ -75,6 +75,8 @@ struct KeyframeTRS {
     glm::vec3 Scale = { 1,1,1 };
 };
 
+enum class PlayerAnimState { Idle = 0, Walk, Jump, Fall };
+
 struct SceneObject {
     struct RenderPart {
         std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
@@ -671,6 +673,9 @@ public:
         m_Objects[playerIdx].Script = std::make_unique<CatScript>();
         m_Objects[playerIdx].Script->Owner = &m_Objects[playerIdx];
         m_Objects[playerIdx].Script->OnStart();
+        SpawnBazookaForPlayer(playerIdx);
+        m_Projectiles.clear();
+        m_BazookaCooldownTimer = 0.0f;
 
         // Scripts éventuels sur les autres objets
         for (int i = 0; i < playerIdx; i++)
@@ -695,6 +700,8 @@ public:
         m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
         m_PlayerOnGround = false;
         m_PlayerBridgeTime = 0.0f;
+        m_Projectiles.clear();
+        m_BazookaCooldownTimer = 0.0f;
         m_Selection.clear();
         m_Selected = m_Objects.empty() ? -1 : 0;
         if (m_Selected >= 0) m_Selection.insert(m_Selected);
@@ -1087,15 +1094,45 @@ public:
         player.AnimationLoop = true;
     }
 
+    void EnsurePlayerAirKeys()
+    {
+        if (m_PlayerJumpKeys.empty()) {
+            KeyframeTRS a; a.Time = 0.0f; a.Scale = { 1.0f, 0.92f, 1.0f }; a.Rotation = { -8.0f, 0.0f, 0.0f };
+            KeyframeTRS b = a; b.Time = 0.3f; b.Scale = { 1.0f, 0.98f, 1.0f }; b.Rotation = { -4.0f, 0.0f, 0.0f };
+            m_PlayerJumpKeys = { a,b };
+        }
+        if (m_PlayerFallKeys.empty()) {
+            KeyframeTRS a; a.Time = 0.0f; a.Scale = { 1.0f, 1.08f, 1.0f }; a.Rotation = { 10.0f, 0.0f, 0.0f };
+            KeyframeTRS b = a; b.Time = 0.3f; b.Scale = { 1.0f, 1.04f, 1.0f }; b.Rotation = { 6.0f, 0.0f, 0.0f };
+            m_PlayerFallKeys = { a,b };
+        }
+    }
+
     void UpdatePlayerBridgeAnimation(SceneObject& player, float dt)
     {
         EnsurePlayerAnimKeys(player);
+        EnsurePlayerAirKeys();
         float horizSpeed = sqrtf(m_PlayerVelocity.x * m_PlayerVelocity.x + m_PlayerVelocity.z * m_PlayerVelocity.z);
-        bool walking = horizSpeed > 0.15f;
-        const std::vector<KeyframeTRS>& keys = walking ? m_PlayerWalkKeys : m_PlayerIdleKeys;
+        PlayerAnimState newState = PlayerAnimState::Idle;
+        if (!m_PlayerOnGround)
+            newState = (m_PlayerVelocity.y > 0.05f) ? PlayerAnimState::Jump : PlayerAnimState::Fall;
+        else if (horizSpeed > 0.15f)
+            newState = PlayerAnimState::Walk;
+
+        if (newState != m_PlayerAnimState) {
+            m_PlayerAnimState = newState;
+            m_PlayerBridgeTime = 0.0f;
+        }
+
+        const std::vector<KeyframeTRS>* keysPtr = &m_PlayerIdleKeys;
+        float speedMul = 1.2f;
+        if (m_PlayerAnimState == PlayerAnimState::Walk) { keysPtr = &m_PlayerWalkKeys; speedMul = 2.6f; }
+        else if (m_PlayerAnimState == PlayerAnimState::Jump) { keysPtr = &m_PlayerJumpKeys; speedMul = 1.0f; }
+        else if (m_PlayerAnimState == PlayerAnimState::Fall) { keysPtr = &m_PlayerFallKeys; speedMul = 1.0f; }
+        const std::vector<KeyframeTRS>& keys = *keysPtr;
         if (keys.size() < 2) return;
 
-        m_PlayerBridgeTime += dt * (walking ? 2.6f : 1.2f);
+        m_PlayerBridgeTime += dt * speedMul;
         float startT = keys.front().Time;
         float duration = GetAnimationDuration(keys);
         float rel = m_PlayerBridgeTime - startT;
@@ -1107,7 +1144,104 @@ public:
         // Bridge léger: on anime principalement l'échelle et un peu le roll,
         // sans casser la physique/position ni le yaw gameplay.
         player.Scale = glm::max(m_CurrentPlayerScale * s.Scale, glm::vec3(0.01f));
+        player.Rotation.x = s.Rotation.x;
         player.Rotation.z = s.Rotation.z;
+    }
+
+    int FindObjectByName(const std::string& name)
+    {
+        for (int i = 0; i < (int)m_Objects.size(); ++i)
+            if (m_Objects[i].Name == name) return i;
+        return -1;
+    }
+
+    void SpawnBazookaForPlayer(int playerIdx)
+    {
+        if (playerIdx < 0 || playerIdx >= (int)m_Objects.size()) return;
+        if (FindObjectByName("PlayerBazooka") >= 0) return;
+
+        SceneObject baz;
+        baz.Name = "PlayerBazooka";
+        baz.Type = PrimitiveType::Custom;
+        baz.MeshPath = "assets/models/roblox/bazooka/bazooka1Tex.obj";
+        baz.Mat.Diffuse = { 1.0f, 1.0f, 1.0f };
+        baz.Mat.Specular = { 0.35f, 0.35f, 0.35f };
+        baz.Mat.Shininess = 24.0f;
+        baz.Mat.Model = IlluminationModel::Phong;
+        baz.ParentIndex = playerIdx;
+        baz.Position = { 0.23f * m_CurrentPlayerScale.x, 0.34f * m_CurrentPlayerScale.y, -0.03f * m_CurrentPlayerScale.z };
+        baz.Rotation = { 0.0f, 90.0f, 0.0f };
+        baz.Scale = { 0.35f * m_CurrentPlayerScale.x, 0.35f * m_CurrentPlayerScale.y, 0.35f * m_CurrentPlayerScale.z };
+        m_Objects.push_back(baz);
+        GetMeshForObject(m_Objects.back());
+    }
+
+    void FireBazookaProjectile(const SceneObject& player)
+    {
+        Projectile p;
+        float yR = glm::radians(m_PlayFPYawDeg);
+        float pR = glm::radians(m_PlayFPPitchDeg);
+        glm::vec3 fwd(-cosf(yR) * cosf(pR), sinf(pR), -sinf(yR) * cosf(pR));
+        if (glm::length(fwd) < 1e-4f) fwd = { 0,0,-1 };
+        fwd = glm::normalize(fwd);
+        p.Velocity = fwd * m_ProjectileSpeed;
+        p.Position = player.Position + glm::vec3(0.0f, 0.62f * player.Scale.y, 0.0f) + fwd * (0.28f * player.Scale.y);
+        p.Life = m_ProjectileLifetime;
+        p.Radius = 0.10f * glm::max(player.Scale.y, 0.2f);
+        p.Active = true;
+        m_Projectiles.push_back(p);
+        m_BazookaCooldownTimer = m_BazookaCooldown;
+    }
+
+    void ExplodeAt(const glm::vec3& center)
+    {
+        for (auto& obj : m_Objects) {
+            if (obj.Name == "Player" || obj.Name == "PlayerBazooka")
+                continue;
+            glm::vec3 wp = obj.GetWorldPosition(m_Objects);
+            glm::vec3 d = wp - center;
+            float len = glm::length(d);
+            if (len > m_ExplosionRadius || len < 1e-4f)
+                continue;
+            glm::vec3 dir = d / len;
+            float t = 1.0f - (len / m_ExplosionRadius);
+            glm::vec3 impulse = dir * (m_ExplosionForce * t);
+            if (obj.UseSpring)
+                obj.SpringVelocity += impulse / glm::max(0.05f, obj.SpringMass);
+            else
+                obj.Position += impulse * 0.03f;
+            if (obj.Type == PrimitiveType::PolarMarker)
+                obj.PolarSyncPolarFromCartesianXZ();
+        }
+    }
+
+    void UpdateProjectiles(float dt)
+    {
+        float safeDt = glm::min(dt, 0.033f);
+        for (auto& p : m_Projectiles) {
+            if (!p.Active) continue;
+            p.Life -= safeDt;
+            if (p.Life <= 0.0f) { p.Active = false; continue; }
+            p.Velocity.y += m_ProjectileGravity * safeDt;
+            p.Position += p.Velocity * safeDt;
+
+            bool hit = false;
+            for (const auto& c : m_PlayStaticColliders) {
+                bool inside =
+                    (p.Position.x >= c.Min.x && p.Position.x <= c.Max.x) &&
+                    (p.Position.y >= c.Min.y && p.Position.y <= c.Max.y) &&
+                    (p.Position.z >= c.Min.z && p.Position.z <= c.Max.z);
+                if (inside) { hit = true; break; }
+            }
+            if (hit) {
+                ExplodeAt(p.Position);
+                p.Active = false;
+            }
+        }
+        m_Projectiles.erase(
+            std::remove_if(m_Projectiles.begin(), m_Projectiles.end(),
+                [](const Projectile& p) { return !p.Active; }),
+            m_Projectiles.end());
     }
 
     void EnsureAuxFramebuffer(std::shared_ptr<Purr::Framebuffer>& fb, const glm::vec2& sz)
@@ -1229,6 +1363,25 @@ public:
             for (const auto& t : transparent) drawObjectAtIndex(t.Idx);
             Purr::RenderCommand::SetDepthWrite(true);
             Purr::RenderCommand::SetBlend(false);
+        }
+
+        if (!m_Projectiles.empty()) {
+            m_Shader->Bind();
+            uploadLights(m_Shader);
+            m_Shader->SetInt("u_IllumModel", (int)IlluminationModel::Phong);
+            m_Shader->SetFloat3("u_MatAmbient", glm::vec3(0.3f, 0.2f, 0.05f));
+            m_Shader->SetFloat3("u_MatDiffuse", glm::vec3(1.0f, 0.55f, 0.12f));
+            m_Shader->SetFloat3("u_MatSpecular", glm::vec3(0.9f, 0.8f, 0.45f));
+            m_Shader->SetFloat("u_MatShininess", 48.0f);
+            m_Shader->SetFloat("u_Opacity", 1.0f);
+            for (const auto& p : m_Projectiles) {
+                if (!p.Active) continue;
+                glm::mat4 model = glm::translate(glm::mat4(1.0f), p.Position) * glm::scale(glm::mat4(1.0f), glm::vec3(p.Radius));
+                glm::mat4 normalMat = glm::transpose(glm::inverse(model));
+                m_Shader->SetMat4("u_Model", model);
+                m_Shader->SetMat4("u_NormalMat", normalMat);
+                Purr::RenderCommand::DrawIndexed(m_SphereVA);
+            }
         }
 
         if (drawEditorOverlays) {
@@ -1523,6 +1676,7 @@ public:
         // Scripts — seulement en Play mode
         if (m_State == EngineState::Playing)
         {
+            m_BazookaCooldownTimer = glm::max(0.0f, m_BazookaCooldownTimer - dt);
             // Jump: Space en Play (sortie Play déplacée sur Escape).
             if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space) && m_PlayerOnGround) {
                 m_PlayerVelocity.y = m_JumpVelocity;
@@ -1555,12 +1709,16 @@ public:
             for (auto& obj : m_Objects) {
                 if (obj.Name == "Player") {
                     ResolvePlayerPhysics(obj, safeDt);
-                    UpdatePlayerBridgeAnimation(obj, safeDt);
                     UpdatePlayCamera(obj, safeDt);
+                    if (!io.WantTextInput && m_BazookaCooldownTimer <= 0.0f &&
+                        ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                        (m_ViewportHovered || IsPlayFirstPerson()))
+                        FireBazookaProjectile(obj);
                     break;
                 }
             }
             UpdateSpringAnimations(safeDt);
+            UpdateProjectiles(safeDt);
         }
 
 
@@ -2365,6 +2523,13 @@ public:
             ImGui::SliderFloat("Shrink XZ (murs Cube/Plan)", &m_ColliderShrinkXZ, 0.0f, 0.35f);
             ImGui::SliderFloat("Floor flatness (h / min XZ)", &m_FloorAspectThreshold, 0.05f, 0.5f);
             ImGui::TextDisabled("Utilise au prochain Play.");
+            ImGui::Separator();
+            ImGui::Text("Bazooka / projectile");
+            ImGui::DragFloat("Projectile speed", &m_ProjectileSpeed, 0.2f, 2.0f, 60.0f);
+            ImGui::DragFloat("Projectile life", &m_ProjectileLifetime, 0.05f, 0.2f, 10.0f);
+            ImGui::DragFloat("Explosion radius", &m_ExplosionRadius, 0.05f, 0.2f, 10.0f);
+            ImGui::DragFloat("Explosion force", &m_ExplosionForce, 0.1f, 0.1f, 30.0f);
+            ImGui::TextDisabled("Tir: clic gauche en Play.");
         }
 
         if (m_State == EngineState::Playing) ImGui::EndDisabled();
@@ -2978,6 +3143,14 @@ private:
         float Radius = 5.0f;
         float Azimuth = 45.0f;
         float Elevation = 25.0f;
+    };
+
+    struct Projectile {
+        glm::vec3 Position = { 0,0,0 };
+        glm::vec3 Velocity = { 0,0,0 };
+        float Life = 0.0f;
+        float Radius = 0.08f;
+        bool Active = true;
     };
 
     std::shared_ptr<Purr::VertexArray> GetMeshForObject(SceneObject& obj)
@@ -3790,8 +3963,19 @@ private:
     float                         m_PlayFPEyeForwardScale = 0.07f;
     bool                          m_PlayCameraPrevFirstPerson = false;
     float                         m_PlayerBridgeTime = 0.0f;
+    PlayerAnimState               m_PlayerAnimState = PlayerAnimState::Idle;
     std::vector<KeyframeTRS>      m_PlayerIdleKeys;
     std::vector<KeyframeTRS>      m_PlayerWalkKeys;
+    std::vector<KeyframeTRS>      m_PlayerJumpKeys;
+    std::vector<KeyframeTRS>      m_PlayerFallKeys;
+    std::vector<Projectile>       m_Projectiles;
+    float                         m_BazookaCooldown = 0.23f;
+    float                         m_BazookaCooldownTimer = 0.0f;
+    float                         m_ProjectileSpeed = 15.0f;
+    float                         m_ProjectileLifetime = 2.0f;
+    float                         m_ProjectileGravity = -1.2f;
+    float                         m_ExplosionRadius = 1.85f;
+    float                         m_ExplosionForce = 6.0f;
     int                           m_ImGuiThemeIndex = 0;
 };
 

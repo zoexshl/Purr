@@ -63,6 +63,9 @@
     <ClInclude Include="src\Purr\Application.h">
       <Filter>src\Purr</Filter>
     </ClInclude>
+    <ClInclude Include="src\Purr\AssimpLoader.h">
+      <Filter>src\Purr</Filter>
+    </ClInclude>
     <ClInclude Include="src\Purr\Core.h">
       <Filter>src\Purr</Filter>
     </ClInclude>
@@ -1410,6 +1413,9 @@
       <Filter>src\Platform\Windows</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\Application.cpp">
+      <Filter>src\Purr</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Purr\AssimpLoader.cpp">
       <Filter>src\Purr</Filter>
     </ClCompile>
     <ClCompile Include="src\Purr\ImGui\ImGuiBuild.cpp">

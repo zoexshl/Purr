@@ -18,6 +18,7 @@ IncludeDir["GLFW"] = "Purr/vendor/GLFW/include"
 IncludeDir["Glad"] = "Purr/vendor/Glad/include"
 IncludeDir["ImGui"] = "Purr/vendor/imgui"
 IncludeDir["glm"] = "Purr/vendor/glm"
+IncludeDir["Assimp"] = "Purr/vendor/assimp/include" -- Animation
 -- Inclure le premake5.lua situ� dans le dossier GLFW
 include "Purr/vendor/GLFW" 
 include "Purr/vendor/Glad" 
@@ -70,7 +71,8 @@ project "Purr"
 		"%{IncludeDir.ImGui}",
 		"%{IncludeDir.glm}",
 		"%{prj.name}/vendor/stb_image",
-		"%{prj.name}/vendor/nlohmann"
+		"%{prj.name}/vendor/nlohmann",
+		"%{IncludeDir.Assimp}"
 	}
 
 
@@ -109,16 +111,19 @@ buildoptions { "/external:W0" }
 
 
 	filter "configurations:Debug"
+		links { "Purr/vendor/assimp/lib/Debug/assimp-vc143-mtd"  }
 		defines "PURR_DEBUG"
 		runtime "Debug"
 		symbols "on"
 
 	filter "configurations:Release"
+		links { "Purr/vendor/assimp/lib/Release/assimp-vc143-mt" }
 		defines "PURR_RELEASE"
 		runtime "Release"
 		optimize "on"
 
 	filter "configurations:Dist"
+		links { "Purr/vendor/assimp/lib/Release/assimp-vc143-mt" }
 		defines "PURR_DIST"
 		runtime "Release"
 		optimize "on"
@@ -146,7 +151,8 @@ project "Sandbox"
 		"Purr/vendor/spdlog/include",
 		"Purr/src",
 		"Purr/vendor",
-		"%{IncludeDir.glm}"
+		"%{IncludeDir.glm}",
+		"%{IncludeDir.Assimp}"
 	
 	}
 
@@ -169,11 +175,17 @@ project "Sandbox"
 
 
 	filter "configurations:Debug"
+	    postbuildcommands {
+			'{COPY} "%{wks.location}Purr/vendor/assimp/bin/Debug/assimp-vc143-mtd.dll" "%{cfg.targetdir}"'
+		}
 		defines "PURR_DEBUG"
 		runtime "Debug"
 		symbols "On"
 
 	filter "configurations:Release"
+	    postbuildcommands {
+			'{COPY} "%{wks.location}Purr/vendor/assimp/bin/Release/assimp-vc143-mt.dll" "%{cfg.targetdir}"'
+		}
 		defines "PURR_RELEASE"
 		runtime "Release"
 		optimize "on"
