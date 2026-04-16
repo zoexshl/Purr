@@ -321,6 +321,7 @@ private:
 // -----------------------------------------------------------------------
 enum class GizmoAxis { None, X, Y, Z, All };
 enum class GizmoMode { Translate, Rotate, Scale };
+enum class PlayerAvatarChoice { Male = 0, Female };
 
 // -----------------------------------------------------------------------
 // ExampleLayer
@@ -376,21 +377,9 @@ public:
         spec.Width = 1280; spec.Height = 720;
         m_Framebuffer = std::make_shared<Purr::Framebuffer>(spec);
 
-        SceneObject a; a.Name = "Cube 1"; a.Position = { -1.5f,0,0 };
-        a.Mat.Diffuse = { 1.0f,0.4f,0.7f }; a.Mat.Model = IlluminationModel::Phong;
-        m_Objects.push_back(a);
-
-        SceneObject b; b.Name = "Cube 2"; b.Position = { 1.5f,0,0 };
-        b.Mat.Diffuse = { 0.4f,0.7f,1.0f }; b.Mat.Model = IlluminationModel::BlinnPhong;
-        m_Objects.push_back(b);
-
-        SceneObject c; c.Name = "Cube 3"; c.Position = { 0,0,-2.5f };
-        c.Mat.Diffuse = { 0.5f,1.0f,0.5f }; c.Mat.Model = IlluminationModel::Lambert;
-        m_Objects.push_back(c);
-
         SceneObject plane; plane.Name = "Plan (sol)"; plane.Type = PrimitiveType::Plane;
         plane.TexTiling = 4.0f;
-        plane.Position = { 0,-0.5f,0 }; plane.Scale = { 6,1,6 };
+        plane.Position = { 0,-0.5f,0 }; plane.Scale = { 40.0f,1.0f,40.0f };
         plane.Mat.Model = IlluminationModel::Lambert;
         plane.Tex = m_CheckerTex;
         m_Objects.push_back(plane);
@@ -801,6 +790,32 @@ public:
         }
     }
 
+    std::string GetSelectedPlayerMeshPath() const
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const std::string& preferred = (m_PlayerAvatarChoice == PlayerAvatarChoice::Female)
+            ? m_PlayerFemaleMeshPath
+            : m_PlayerMaleMeshPath;
+        ec.clear();
+        if (!preferred.empty() && fs::exists(preferred, ec) && !ec)
+            return preferred;
+        ec.clear();
+        if (!m_PlayerMaleMeshPath.empty() && fs::exists(m_PlayerMaleMeshPath, ec) && !ec)
+            return m_PlayerMaleMeshPath;
+        return "assets/models/roblox/baconHair1Tex.obj";
+    }
+
+    glm::vec3 GetAvatarScaleMultiplier() const
+    {
+        return (m_PlayerAvatarChoice == PlayerAvatarChoice::Male) ? m_MaleAvatarScaleMultiplier : m_FemaleAvatarScaleMultiplier;
+    }
+
+    glm::vec3 GetAvatarSpawnOffset() const
+    {
+        return (m_PlayerAvatarChoice == PlayerAvatarChoice::Male) ? m_MaleAvatarSpawnOffset : m_FemaleAvatarSpawnOffset;
+    }
+
     void ImportFBXGrouped(const std::string& path)
     {
         auto meshes = LoadMeshFile(path);
@@ -906,9 +921,10 @@ public:
         SceneObject player;
         player.Name = "Player";
         player.Type = PrimitiveType::Custom;
-        player.MeshPath = "assets/models/roblox/baconHair1Tex.obj";
-        player.Position = hasSpawnMarker ? markerSpawnPos : m_CurrentMapSpawn;
-        player.Scale = m_CurrentPlayerScale;
+        player.MeshPath = GetSelectedPlayerMeshPath();
+        PURR_INFO("Play avatar: {}", player.MeshPath);
+        player.Position = (hasSpawnMarker ? markerSpawnPos : m_CurrentMapSpawn) + GetAvatarSpawnOffset();
+        player.Scale = glm::max(m_CurrentPlayerScale * GetAvatarScaleMultiplier(), glm::vec3(0.01f));
         player.Mat.Diffuse = { 1.0f, 1.0f, 1.0f };  // blanc = texture pure
         player.Mat.Specular = { 0.3f, 0.3f, 0.3f };
         player.Mat.Shininess = 32.0f;
@@ -2809,6 +2825,16 @@ public:
             ImGui::SameLine();
         }
         ImGui::NewLine();
+        ImGui::Text("Avatar joueur");
+        bool isMale = (m_PlayerAvatarChoice == PlayerAvatarChoice::Male);
+        bool isFemale = (m_PlayerAvatarChoice == PlayerAvatarChoice::Female);
+        if (ImGui::RadioButton("M", isMale)) m_PlayerAvatarChoice = PlayerAvatarChoice::Male;
+        ImGui::SameLine();
+        if (ImGui::RadioButton("F", isFemale)) m_PlayerAvatarChoice = PlayerAvatarChoice::Female;
+        ImGui::TextDisabled("M path: %s", m_PlayerMaleMeshPath.c_str());
+        ImGui::TextDisabled("F path: %s", m_PlayerFemaleMeshPath.c_str());
+        ImGui::Separator();
+
         if (ImGui::Button("Ajouter Spawn Marker", ImVec2(180.0f, 0.0f))) {
             SceneObject marker;
             marker.Name = "SpawnMarker";
@@ -2834,6 +2860,12 @@ public:
             ImGui::DragFloat3("##map_spawn_player", glm::value_ptr(m_CurrentMapSpawn), 0.05f);
             ImGui::Text("Scale joueur (preset)");
             ImGui::DragFloat3("##map_scale_player", glm::value_ptr(m_CurrentPlayerScale), 0.01f, 0.1f, 10.0f);
+            ImGui::Separator();
+            ImGui::Text("Ajustements avatar");
+            ImGui::DragFloat3("Male scale mult", glm::value_ptr(m_MaleAvatarScaleMultiplier), 0.01f, 0.1f, 4.0f);
+            ImGui::DragFloat3("Male spawn offset", glm::value_ptr(m_MaleAvatarSpawnOffset), 0.01f, -5.0f, 5.0f);
+            ImGui::DragFloat3("Female scale mult", glm::value_ptr(m_FemaleAvatarScaleMultiplier), 0.01f, 0.1f, 4.0f);
+            ImGui::DragFloat3("Female spawn offset", glm::value_ptr(m_FemaleAvatarSpawnOffset), 0.01f, -5.0f, 5.0f);
             ImGui::Checkbox("Auto spawn snap au sol", &m_EnableAutoSpawnSnap);
             ImGui::DragFloat("Spawn search height", &m_AutoSpawnSearchHeight, 0.1f, 0.2f, 50.0f);
             ImGui::DragFloat("Spawn clearance", &m_AutoSpawnClearance, 0.01f, 0.0f, 1.0f);
@@ -3526,6 +3558,61 @@ private:
                         obj.Tex = Purr::TextureManager::Load(texIt->second);
                 }
                 return it->second;
+            }
+
+            namespace fs = std::filesystem;
+            std::string ext = fs::path(obj.MeshPath).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+
+            // Les avatars peuvent etre en FBX/GLTF: on passe par Assimp (LoadMeshFile).
+            if (ext != ".obj") {
+                auto meshes = LoadMeshFile(obj.MeshPath);
+                if (!meshes.empty()) {
+                    std::vector<CachedObjPart> cachedParts;
+                    cachedParts.reserve(meshes.size());
+                    obj.Parts.clear();
+
+                    for (const auto& lm : meshes) {
+                        auto vaPart = BuildVertexArrayFromLoadedMesh(lm);
+                        if (!vaPart)
+                            continue;
+
+                        const std::string resolvedTex = ResolveImportedTexturePath(obj.MeshPath, lm.TexturePath);
+
+                        CachedObjPart cachePart;
+                        cachePart.Mesh = vaPart;
+                        cachePart.TexPath = resolvedTex;
+                        cachedParts.push_back(cachePart);
+
+                        SceneObject::RenderPart part;
+                        part.Mesh = vaPart;
+                        part.TexturePath = resolvedTex;
+                        if (!resolvedTex.empty())
+                            part.Texture = Purr::TextureManager::Load(resolvedTex);
+                        obj.Parts.push_back(part);
+                    }
+
+                    if (!cachedParts.empty()) {
+                        if (cachedParts.size() == 1 && cachedParts.front().TexPath.empty()) {
+                            const std::string fallbackDiffuse = GuessDiffuseTextureNearModel(obj.MeshPath);
+                            if (!fallbackDiffuse.empty()) {
+                                cachedParts.front().TexPath = fallbackDiffuse;
+                                obj.Parts.front().TexturePath = fallbackDiffuse;
+                                obj.Parts.front().Texture = Purr::TextureManager::Load(fallbackDiffuse);
+                            }
+                        }
+
+                        m_ObjMultiMeshCache[obj.MeshPath] = cachedParts;
+                        m_MeshCache[obj.MeshPath] = cachedParts.front().Mesh;
+                        m_ObjTexCache[obj.MeshPath] = cachedParts.front().TexPath;
+
+                        if (!cachedParts.front().TexPath.empty() && !obj.Tex) {
+                            obj.TexPath = cachedParts.front().TexPath;
+                            obj.Tex = Purr::TextureManager::Load(cachedParts.front().TexPath);
+                        }
+                        return cachedParts.front().Mesh;
+                    }
+                }
             }
 
             std::vector<Purr::ObjSubmesh> submeshes;
@@ -4256,6 +4343,13 @@ private:
     std::string                                                         m_CurrentMapName;
     glm::vec3                                                           m_CurrentMapSpawn = { 0.0f, 0.0f, 0.0f };
     glm::vec3                                                           m_CurrentPlayerScale = { 0.5f, 0.5f, 0.5f };
+    PlayerAvatarChoice                                                  m_PlayerAvatarChoice = PlayerAvatarChoice::Male;
+    std::string                                                         m_PlayerMaleMeshPath = "assets/models/roblox/male_player/source/12.fbx";
+    std::string                                                         m_PlayerFemaleMeshPath = "assets/models/roblox/female_player/baconHair1Tex.obj";
+    glm::vec3                                                           m_MaleAvatarScaleMultiplier = { 0.55f, 0.55f, 0.55f };
+    glm::vec3                                                           m_MaleAvatarSpawnOffset = { 0.0f, 0.0f, 0.0f };
+    glm::vec3                                                           m_FemaleAvatarScaleMultiplier = { 1.0f, 1.0f, 1.0f };
+    glm::vec3                                                           m_FemaleAvatarSpawnOffset = { 0.0f, 0.0f, 0.0f };
 
     // Play mode
     enum class EngineState { Editor, Playing };
