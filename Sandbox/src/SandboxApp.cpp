@@ -578,6 +578,31 @@ public:
         }
     }
 
+    void SanitizeSelectionState()
+    {
+        std::unordered_set<int> cleaned;
+        for (int idx : m_Selection) {
+            if (idx >= 0 && idx < (int)m_Objects.size())
+                cleaned.insert(idx);
+        }
+        m_Selection.swap(cleaned);
+
+        if (m_Selected < 0 || m_Selected >= (int)m_Objects.size())
+            m_Selected = -1;
+
+        if (m_Selected == -1) {
+            if (!m_Selection.empty())
+                m_Selected = *m_Selection.begin();
+            else if (!m_Objects.empty()) {
+                m_Selected = 0;
+                m_Selection.insert(0);
+            }
+        }
+        else if (!m_Selection.count(m_Selected)) {
+            m_Selection.insert(m_Selected);
+        }
+    }
+
     void CommitRename(int i)
     {
         if (strlen(m_RenameBuffer) > 0 && i >= 0 && i < (int)m_Objects.size()) {
@@ -1733,6 +1758,7 @@ public:
         }
 
         ImGuiIO& io = ImGui::GetIO();
+        SanitizeSelectionState();
         SyncPlayCursorAndImGui();
         UpdateClassicAnimations(dt);
         if (m_State != EngineState::Playing)
@@ -3204,7 +3230,7 @@ public:
         m_RedoStack.push_back(m_Objects);
         m_Objects = m_UndoStack.back();
         m_UndoStack.pop_back();
-        m_Selected = glm::clamp(m_Selected, -1, (int)m_Objects.size() - 1);
+        SanitizeSelectionState();
     }
     void Redo()
     {
@@ -3212,7 +3238,7 @@ public:
         m_UndoStack.push_back(m_Objects);
         m_Objects = m_RedoStack.back();
         m_RedoStack.pop_back();
-        m_Selected = glm::clamp(m_Selected, -1, (int)m_Objects.size() - 1);
+        SanitizeSelectionState();
     }
 
     void ComputeHistogram()

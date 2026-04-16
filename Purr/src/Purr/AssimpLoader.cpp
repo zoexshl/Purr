@@ -4,16 +4,28 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <filesystem>
+#include <algorithm>
 
 std::vector<LoadedMesh> LoadMeshFile(const std::string& filepath)
 {
     Assimp::Importer importer;
-    const aiScene* scene = importer.ReadFile(filepath,
+    namespace fs = std::filesystem;
+    std::string ext = fs::path(filepath).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    const bool isFbx = (ext == ".fbx");
+
+    unsigned int flags =
         aiProcess_Triangulate |
         aiProcess_GenSmoothNormals |
-        aiProcess_FlipUVs |           // OpenGL attend V inversé pour FBX
-        aiProcess_CalcTangentSpace
-    );
+        aiProcess_CalcTangentSpace;
+
+    // Roblox FBX semble deja avoir des UV compatibles, on ne flip pas.
+    if (!isFbx)
+        flags |= aiProcess_FlipUVs;
+
+    PURR_INFO("Assimp import '{}' (isFbx={}, flipUVs={})", filepath, isFbx ? 1 : 0, (!isFbx) ? 1 : 0);
+    const aiScene* scene = importer.ReadFile(filepath, flags);
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
     {
