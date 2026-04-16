@@ -97,6 +97,7 @@ struct SceneObject {
         std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
         std::shared_ptr<Purr::Texture> Texture = nullptr;
         std::string TexturePath;
+        std::vector<std::string> BoneNames;
         glm::vec3 DiffuseTint = glm::vec3(1.0f);
         glm::vec3 BoundsMin = glm::vec3(0.0f);
         glm::vec3 BoundsMax = glm::vec3(0.0f);
@@ -344,7 +345,7 @@ public:
     {
         BuildCubeMesh(); BuildPlaneMesh();
         BuildTriangleMesh(); BuildCircleMesh(); BuildRegPolygonMesh(); BuildEllipseMesh(); BuildSphereMesh();
-        BuildShader(); BuildTexturedShader();
+        BuildShader(); BuildTexturedShader(); BuildSkinnedTexturedShader();
         BuildWireShader(); BuildBBoxMesh();
         BuildGizmoShader(); BuildArrowMesh(); BuildRingMesh(); BuildScaleHandleMesh();
 
@@ -648,11 +649,15 @@ public:
             return nullptr;
 
         std::vector<float> raw;
-        raw.reserve(lm.Vertices.size() * 8);
+        raw.reserve(lm.Vertices.size() * 16);
         for (const auto& v : lm.Vertices) {
             raw.push_back(v.Position.x); raw.push_back(v.Position.y); raw.push_back(v.Position.z);
             raw.push_back(v.Normal.x);   raw.push_back(v.Normal.y);   raw.push_back(v.Normal.z);
             raw.push_back(v.TexCoords.x); raw.push_back(v.TexCoords.y);
+            raw.push_back((float)v.BoneIDs.x); raw.push_back((float)v.BoneIDs.y);
+            raw.push_back((float)v.BoneIDs.z); raw.push_back((float)v.BoneIDs.w);
+            raw.push_back(v.BoneWeights.x); raw.push_back(v.BoneWeights.y);
+            raw.push_back(v.BoneWeights.z); raw.push_back(v.BoneWeights.w);
         }
 
         auto va = std::make_shared<Purr::VertexArray>();
@@ -660,7 +665,9 @@ public:
         vb->SetLayout({
             { Purr::ShaderDataType::Float3, "a_Position" },
             { Purr::ShaderDataType::Float3, "a_Normal"   },
-            { Purr::ShaderDataType::Float2, "a_TexCoord" }
+            { Purr::ShaderDataType::Float2, "a_TexCoord" },
+            { Purr::ShaderDataType::Float4, "a_BoneIDs" },
+            { Purr::ShaderDataType::Float4, "a_BoneWeights" }
             });
         va->AddVertexBuffer(vb);
         // IndexBuffer prend un pointeur non-const, on copie depuis le mesh source const.
@@ -822,7 +829,8 @@ public:
 
     void ImportFBXGrouped(const std::string& path)
     {
-        auto meshes = LoadMeshFile(path);
+        auto animated = LoadAnimatedAsset(path);
+        auto& meshes = animated.Meshes;
         if (meshes.empty())
             return;
 
@@ -878,6 +886,8 @@ public:
 
             SceneObject::RenderPart part;
             part.Mesh = BuildVertexArrayFromLoadedMesh(meshes[i]);
+            for (const auto& b : meshes[i].Bones)
+                part.BoneNames.push_back(b.Name);
             part.DiffuseTint = glm::vec3(1.0f);
             std::string resolvedTex = ResolveImportedTexturePath(path, meshes[i].TexturePath);
             // Important: ne pas appliquer un fallback global a toutes les parts.
@@ -962,6 +972,7 @@ public:
         s_PlayCameraAzimuthDeg = m_PlayFPYawDeg;
         m_PlayCameraPrevFirstPerson = false;
         m_PlayerBridgeTime = 0.0f;
+        m_SkinnedAnimTime = 0.0f;
         s_PlayCameraFirstPerson = IsPlayFirstPerson();
         UpdatePlayCamera(m_Objects[playerIdx], 0.016f);
 
@@ -997,6 +1008,7 @@ public:
         m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
         m_PlayerOnGround = false;
         m_PlayerBridgeTime = 0.0f;
+        m_SkinnedAnimTime = 0.0f;
         m_Projectiles.clear();
         m_BazookaCooldownTimer = 0.0f;
         m_PlayBazookaEquipped = false;
@@ -1645,22 +1657,40 @@ public:
             auto va = GetMeshForObject(obj);
             if (!va) return;
             const float op = glm::clamp(obj.Opacity, 0.0f, 1.0f);
-            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint) {
+            AnimationPoseResult skinPose;
+            bool hasSkinPose = false;
+            auto assetIt = m_AnimatedAssetCache.find(obj.MeshPath);
+            if (assetIt != m_AnimatedAssetCache.end() && !assetIt->second.Animations.empty()) {
+                skinPose = EvaluateAnimationPose(assetIt->second, assetIt->second.Animations.front(), m_SkinnedAnimTime);
+                hasSkinPose = true;
+            }
+            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint, const std::vector<std::string>& boneNames) {
                 glm::vec3 finalDiffuse = obj.Mat.Diffuse * diffuseTint;
                 if (tex || obj.UseProceduralTexture) {
-                    m_TexShader->Bind();
-                    uploadLights(m_TexShader);
-                    m_TexShader->SetMat4("u_Model", model);
-                    m_TexShader->SetMat4("u_NormalMat", normalMat);
-                    m_TexShader->SetFloat3("u_MatDiffuse", finalDiffuse);
-                    m_TexShader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
-                    m_TexShader->SetFloat("u_MatShininess", obj.Mat.Shininess);
-                    m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
-                    m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
-                    m_TexShader->SetFloat("u_Opacity", op);
-                    m_TexShader->SetInt("u_UseProceduralTex", obj.UseProceduralTexture ? 1 : 0);
-                    m_TexShader->SetFloat("u_ProceduralTexScale", obj.ProceduralTexScale);
-                    m_TexShader->SetInt("u_Texture", 0);
+                    bool useSkinnedShader = hasSkinPose && !boneNames.empty();
+                    auto& sh = useSkinnedShader ? m_TexSkinShader : m_TexShader;
+                    sh->Bind();
+                    uploadLights(sh);
+                    sh->SetMat4("u_Model", model);
+                    sh->SetMat4("u_NormalMat", normalMat);
+                    sh->SetFloat3("u_MatDiffuse", finalDiffuse);
+                    sh->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                    sh->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                    sh->SetFloat("u_TilingFactor", obj.TexTiling);
+                    sh->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    sh->SetFloat("u_Opacity", op);
+                    sh->SetInt("u_UseProceduralTex", obj.UseProceduralTexture ? 1 : 0);
+                    sh->SetFloat("u_ProceduralTexScale", obj.ProceduralTexScale);
+                    sh->SetInt("u_Texture", 0);
+                    if (useSkinnedShader) {
+                        for (int bi = 0; bi < 100; ++bi)
+                            sh->SetMat4("u_BoneMatrices[" + std::to_string(bi) + "]", glm::mat4(1.0f));
+                        for (size_t bi = 0; bi < boneNames.size() && bi < 100; ++bi) {
+                            auto itBone = skinPose.FinalBoneMatricesByName.find(boneNames[bi]);
+                            if (itBone != skinPose.FinalBoneMatricesByName.end())
+                                sh->SetMat4("u_BoneMatrices[" + std::to_string((int)bi) + "]", itBone->second);
+                        }
+                    }
                     if (tex) tex->Bind(0);
                     Purr::RenderCommand::DrawIndexed(mesh);
                 }
@@ -1680,9 +1710,9 @@ public:
             };
             if (obj.Type == PrimitiveType::Custom && !obj.Parts.empty()) {
                 for (auto& part : obj.Parts)
-                    if (part.Mesh) drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint);
+                    if (part.Mesh) drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint, part.BoneNames);
             }
-            else drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f));
+            else drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f), {});
         };
 
         struct TransparentDraw { int Idx = 0; float Dist = 0.0f; };
@@ -2083,6 +2113,7 @@ public:
             }
 
             float safeDt = glm::min(dt, 0.033f);
+            m_SkinnedAnimTime += safeDt;
             for (auto& obj : m_Objects)
                 if (obj.Script) obj.Script->OnUpdate(safeDt);
 
@@ -2149,23 +2180,41 @@ public:
             if (!va) return;
 
             const float op = glm::clamp(obj.Opacity, 0.0f, 1.0f);
+            AnimationPoseResult skinPose;
+            bool hasSkinPose = false;
+            auto assetIt = m_AnimatedAssetCache.find(obj.MeshPath);
+            if (assetIt != m_AnimatedAssetCache.end() && !assetIt->second.Animations.empty()) {
+                skinPose = EvaluateAnimationPose(assetIt->second, assetIt->second.Animations.front(), m_SkinnedAnimTime);
+                hasSkinPose = true;
+            }
 
-            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint) {
+            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint, const std::vector<std::string>& boneNames) {
                 glm::vec3 finalDiffuse = obj.Mat.Diffuse * diffuseTint;
                 if (tex || obj.UseProceduralTexture) {
-                    m_TexShader->Bind();
-                    uploadLights(m_TexShader);
-                    m_TexShader->SetMat4("u_Model", model);
-                    m_TexShader->SetMat4("u_NormalMat", normalMat);
-                    m_TexShader->SetFloat3("u_MatDiffuse", finalDiffuse);
-                    m_TexShader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
-                    m_TexShader->SetFloat("u_MatShininess", obj.Mat.Shininess);
-                    m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
-                    m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
-                    m_TexShader->SetFloat("u_Opacity", op);
-                    m_TexShader->SetInt("u_UseProceduralTex", obj.UseProceduralTexture ? 1 : 0);
-                    m_TexShader->SetFloat("u_ProceduralTexScale", obj.ProceduralTexScale);
-                    m_TexShader->SetInt("u_Texture", 0);
+                    bool useSkinnedShader = hasSkinPose && !boneNames.empty();
+                    auto& sh = useSkinnedShader ? m_TexSkinShader : m_TexShader;
+                    sh->Bind();
+                    uploadLights(sh);
+                    sh->SetMat4("u_Model", model);
+                    sh->SetMat4("u_NormalMat", normalMat);
+                    sh->SetFloat3("u_MatDiffuse", finalDiffuse);
+                    sh->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                    sh->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                    sh->SetFloat("u_TilingFactor", obj.TexTiling);
+                    sh->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    sh->SetFloat("u_Opacity", op);
+                    sh->SetInt("u_UseProceduralTex", obj.UseProceduralTexture ? 1 : 0);
+                    sh->SetFloat("u_ProceduralTexScale", obj.ProceduralTexScale);
+                    sh->SetInt("u_Texture", 0);
+                    if (useSkinnedShader) {
+                        for (int bi = 0; bi < 100; ++bi)
+                            sh->SetMat4("u_BoneMatrices[" + std::to_string(bi) + "]", glm::mat4(1.0f));
+                        for (size_t bi = 0; bi < boneNames.size() && bi < 100; ++bi) {
+                            auto itBone = skinPose.FinalBoneMatricesByName.find(boneNames[bi]);
+                            if (itBone != skinPose.FinalBoneMatricesByName.end())
+                                sh->SetMat4("u_BoneMatrices[" + std::to_string((int)bi) + "]", itBone->second);
+                        }
+                    }
                     if (tex) tex->Bind(0);
                     Purr::RenderCommand::DrawIndexed(mesh);
                 }
@@ -2188,11 +2237,11 @@ public:
                 for (auto& part : obj.Parts) {
                     if (!part.Mesh)
                         continue;
-                    drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint);
+                    drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint, part.BoneNames);
                 }
             }
             else {
-                drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f));
+                drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f), {});
             }
         };
 
@@ -3485,6 +3534,7 @@ public:
         m_Objects.clear();
         m_MeshCache.clear();
         m_ObjMultiMeshCache.clear();
+        m_AnimatedAssetCache.clear();
         m_Selected = m_Objects.empty() ? -1 : 0;
 
         for (auto& o : j["objects"])
@@ -3565,6 +3615,7 @@ public:
         m_Objects.clear();
         m_MeshCache.clear();
         m_ObjMultiMeshCache.clear();
+        m_AnimatedAssetCache.clear();
         m_ObjTexCache.clear();
 
         SceneObject map;
@@ -3597,6 +3648,7 @@ private:
     struct CachedObjPart {
         std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
         std::string TexPath;
+        std::vector<std::string> BoneNames;
         glm::vec3 DiffuseTint = glm::vec3(1.0f);
         glm::vec3 BoundsMin = glm::vec3(0.0f);
         glm::vec3 BoundsMax = glm::vec3(0.0f);
@@ -3639,6 +3691,7 @@ private:
                     SceneObject::RenderPart part;
                     part.Mesh = cachedPart.Mesh;
                     part.TexturePath = cachedPart.TexPath;
+                    part.BoneNames = cachedPart.BoneNames;
                     part.DiffuseTint = cachedPart.DiffuseTint;
                     part.BoundsMin = cachedPart.BoundsMin;
                     part.BoundsMax = cachedPart.BoundsMax;
@@ -3678,7 +3731,12 @@ private:
 
             // Les avatars peuvent etre en FBX/GLTF: on passe par Assimp (LoadMeshFile).
             if (ext != ".obj") {
-                auto meshes = LoadMeshFile(obj.MeshPath);
+                LoadedAnimatedAsset* animAsset = nullptr;
+                auto assetIt = m_AnimatedAssetCache.find(obj.MeshPath);
+                if (assetIt == m_AnimatedAssetCache.end())
+                    assetIt = m_AnimatedAssetCache.emplace(obj.MeshPath, LoadAnimatedAsset(obj.MeshPath)).first;
+                animAsset = &assetIt->second;
+                auto& meshes = animAsset->Meshes;
                 if (!meshes.empty()) {
                     std::vector<CachedObjPart> cachedParts;
                     cachedParts.reserve(meshes.size());
@@ -3694,11 +3752,14 @@ private:
                         CachedObjPart cachePart;
                         cachePart.Mesh = vaPart;
                         cachePart.TexPath = resolvedTex;
+                        for (const auto& b : lm.Bones)
+                            cachePart.BoneNames.push_back(b.Name);
                         cachedParts.push_back(cachePart);
 
                         SceneObject::RenderPart part;
                         part.Mesh = vaPart;
                         part.TexturePath = resolvedTex;
+                        part.BoneNames = cachePart.BoneNames;
                         if (!resolvedTex.empty())
                             part.Texture = Purr::TextureManager::Load(resolvedTex);
                         obj.Parts.push_back(part);
@@ -4367,6 +4428,78 @@ private:
         m_TexShader = std::make_shared<Purr::Shader>(vs, fs);
     }
 
+    void BuildSkinnedTexturedShader() {
+        std::string vs = R"(
+            #version 410 core
+            layout(location=0) in vec3 a_Position;
+            layout(location=1) in vec3 a_Normal;
+            layout(location=2) in vec2 a_TexCoord;
+            layout(location=3) in vec4 a_BoneIDs;
+            layout(location=4) in vec4 a_BoneWeights;
+            uniform mat4 u_VP,u_Model,u_NormalMat;
+            uniform mat4 u_BoneMatrices[100];
+            out vec3 v_FragPos,v_Normal; out vec2 v_TexCoord;
+            void main(){
+                ivec4 ids = ivec4(a_BoneIDs);
+                vec4 w = a_BoneWeights;
+                mat4 skin =
+                    w.x * u_BoneMatrices[clamp(ids.x, 0, 99)] +
+                    w.y * u_BoneMatrices[clamp(ids.y, 0, 99)] +
+                    w.z * u_BoneMatrices[clamp(ids.z, 0, 99)] +
+                    w.w * u_BoneMatrices[clamp(ids.w, 0, 99)];
+                if (dot(w, vec4(1.0)) <= 0.0001)
+                    skin = mat4(1.0);
+                vec4 localPos = skin * vec4(a_Position,1.0);
+                vec3 localNrm = mat3(skin) * a_Normal;
+                vec4 wp=u_Model*localPos;
+                v_FragPos=vec3(wp); v_Normal=normalize(mat3(u_NormalMat)*localNrm);
+                v_TexCoord=a_TexCoord; gl_Position=u_VP*wp;
+            })";
+        std::string fs = R"(
+            #version 410 core
+            in vec3 v_FragPos,v_Normal; in vec2 v_TexCoord;
+            struct LightData{vec3 Position,Color;float Intensity,Constant,Linear,Quadratic;};
+            uniform LightData u_Lights[4];
+            uniform float u_AmbientStrength;
+            uniform vec3 u_CamPos,u_MatDiffuse,u_MatSpecular;
+            uniform float u_MatShininess; uniform int u_IllumModel;
+            uniform sampler2D u_Texture;
+            uniform float u_TilingFactor;
+            uniform int u_UseProceduralTex;
+            uniform float u_ProceduralTexScale;
+            uniform float u_Opacity;
+            out vec4 color;
+            void main(){
+                vec2 uv = v_TexCoord * u_TilingFactor;
+                vec3 baseTex;
+                if (u_UseProceduralTex == 1) {
+                    vec2 puv = v_TexCoord * u_ProceduralTexScale;
+                    float checker = mod(floor(puv.x) + floor(puv.y), 2.0);
+                    vec3 cA = vec3(0.93, 0.92, 0.88);
+                    vec3 cB = vec3(0.22, 0.22, 0.24);
+                    float n = fract(sin(dot(floor(puv), vec2(12.9898,78.233))) * 43758.5453);
+                    baseTex = mix(cA, cB, checker) * (0.86 + 0.14 * n);
+                } else {
+                    baseTex = texture(u_Texture, uv).rgb;
+                }
+                vec3 tc = baseTex * u_MatDiffuse;
+                vec3 N=normalize(v_Normal),V=normalize(u_CamPos-v_FragPos);
+                vec3 r=u_AmbientStrength*tc;
+                for(int i=0;i<4;i++){
+                    if(u_Lights[i].Intensity<=0.0)continue;
+                    vec3 L=normalize(u_Lights[i].Position-v_FragPos);
+                    float d=length(u_Lights[i].Position-v_FragPos);
+                    float att=u_Lights[i].Intensity/(u_Lights[i].Constant+u_Lights[i].Linear*d+u_Lights[i].Quadratic*d*d);
+                    vec3 lc=u_Lights[i].Color*att;
+                    r+=max(dot(N,L),0.0)*lc*tc;
+                    if(u_IllumModel==1){vec3 R=reflect(-L,N);r+=pow(max(dot(V,R),0.0),u_MatShininess)*lc*u_MatSpecular;}
+                    else if(u_IllumModel==2){vec3 H=normalize(L+V);r+=pow(max(dot(N,H),0.0),u_MatShininess)*lc*u_MatSpecular;}
+                }
+                color=vec4(r,u_Opacity);
+            })";
+        m_TexSkinShader = std::make_shared<Purr::Shader>(vs, fs);
+    }
+
     void BuildWireShader() {
         m_WireShader = std::make_shared<Purr::Shader>(
             R"(#version 410 core
@@ -4411,7 +4544,7 @@ private:
     // Renderer
     std::shared_ptr<Purr::VertexArray>  m_VA, m_PlaneVA, m_BBoxVA;
     std::shared_ptr<Purr::VertexArray>  m_TriangleVA, m_CircleVA, m_RegPolygonVA, m_EllipseVA, m_SphereVA;
-    std::shared_ptr<Purr::Shader>       m_Shader, m_TexShader, m_WireShader;
+    std::shared_ptr<Purr::Shader>       m_Shader, m_TexShader, m_TexSkinShader, m_WireShader;
     std::shared_ptr<Purr::Texture>      m_CheckerTex, m_PlayButtonTex, m_StopButtonTex;
     std::shared_ptr<Purr::Framebuffer>  m_Framebuffer;
     std::shared_ptr<Purr::Framebuffer>  m_ViewTopFramebuffer;
@@ -4452,6 +4585,7 @@ private:
     // Cache de mesh
     std::unordered_map<std::string, std::shared_ptr<Purr::VertexArray>> m_MeshCache;
     std::unordered_map<std::string, std::vector<CachedObjPart>>         m_ObjMultiMeshCache;
+    std::unordered_map<std::string, LoadedAnimatedAsset>                m_AnimatedAssetCache;
 
     std::unordered_map<std::string, std::string>                        m_ObjTexCache;
     std::string                                                         m_CurrentMapName;
@@ -4505,6 +4639,7 @@ private:
     float                         m_PlayFPEyeForwardScaleMale = 0.45f;
     bool                          m_PlayCameraPrevFirstPerson = false;
     float                         m_PlayerBridgeTime = 0.0f;
+    float                         m_SkinnedAnimTime = 0.0f;
     PlayerAnimState               m_PlayerAnimState = PlayerAnimState::Idle;
     std::vector<KeyframeTRS>      m_PlayerIdleKeys;
     std::vector<KeyframeTRS>      m_PlayerWalkKeys;
