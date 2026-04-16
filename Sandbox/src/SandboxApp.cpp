@@ -39,8 +39,8 @@ static std::string OpenFileDialog(const char* filter = "All Files\0*.*\0")
 enum class IlluminationModel { Lambert = 0, Phong, BlinnPhong };
 static const char* s_ModelNames[] = { "Lambert", "Phong", "Blinn-Phong" };
 
-enum class PrimitiveType { Cube = 0, Plane, Triangle, Circle, RegularPolygon, Ellipse, Sphere, Custom };
-static const char* s_PrimNames[] = { "Cube", "Plan", "Triangle", "Cercle", "Polygone regulier", "Ellipse", "Sphere", "Modele OBJ" };
+enum class PrimitiveType { Cube = 0, Plane, Triangle, Circle, RegularPolygon, Ellipse, Sphere, Custom, Folder };
+static const char* s_PrimNames[] = { "Cube", "Plan", "Triangle", "Cercle", "Polygone regulier", "Ellipse", "Sphere", "Modele OBJ", "Dossier" };
 
 struct Light {
     glm::vec3 Position = { 0.0f, 3.0f, 0.0f };
@@ -134,6 +134,7 @@ struct SceneObject {
 };
 
 static float s_PlayCameraAzimuthDeg = 35.0f;
+static bool  s_PlayCameraFirstPerson = false;
 
 
 
@@ -169,15 +170,18 @@ public:
             move = glm::normalize(move) * Speed * dt;
             Owner->Position += move;
 
-            // Rotation vers la direction de mouvement
-            // Le mesh Roblox est orienté à l'envers par rapport au repère monde:
-            // on ajoute 180° pour que W = avance visuellement "vers l'avant".
-            float targetAngle = glm::degrees(atan2f(move.x, move.z)) + 180.0f;
-            float diff = targetAngle - Owner->Rotation.y;
-            // wrap
-            while (diff > 180.0f) diff -= 360.0f;
-            while (diff < -180.0f) diff += 360.0f;
-            Owner->Rotation.y += diff * RotSpeed * dt * 0.1f;
+            // En 1re personne, la souris pilote déjà la rotation (comme Roblox).
+            if (!s_PlayCameraFirstPerson) {
+                // Rotation vers la direction de mouvement
+                // Le mesh Roblox est orienté à l'envers par rapport au repère monde:
+                // on ajoute 180° pour que W = avance visuellement "vers l'avant".
+                float targetAngle = glm::degrees(atan2f(move.x, move.z)) + 180.0f;
+                float diff = targetAngle - Owner->Rotation.y;
+                // wrap
+                while (diff > 180.0f) diff -= 360.0f;
+                while (diff < -180.0f) diff += 360.0f;
+                Owner->Rotation.y += diff * RotSpeed * dt * 0.1f;
+            }
         }
 
         // Le Y est geré par la physique globale (gravité + collisions).
@@ -317,7 +321,7 @@ public:
 
     void DrawHierarchyNode(int i)
     {
-        static const char* s_TypeIcons[] = { "[C]","[P]","[T]","[O]","[N]","[E]","[S]","[M]" };
+        static const char* s_TypeIcons[] = { "[C]","[P]","[T]","[O]","[N]","[E]","[S]","[M]","[D]" };
         ImGui::PushID(i);
 
         if (m_Objects[i].HiddenInHierarchy && !m_ShowHiddenInSceneList) {
@@ -351,7 +355,7 @@ public:
                 ImGui::SetTooltip("Afficher / masquer dans cette liste (comme Blender)");
             ImGui::SameLine();
 
-            const char* icon = (int)m_Objects[i].Type < 8 ? s_TypeIcons[(int)m_Objects[i].Type] : "[?]";
+            const char* icon = (int)m_Objects[i].Type < 9 ? s_TypeIcons[(int)m_Objects[i].Type] : "[?]";
             std::string label = std::string(icon) + "  " + m_Objects[i].Name;
 
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow;
@@ -492,6 +496,8 @@ public:
         m_RenamingIndex = -1;
     }
 
+    bool IsPlayFirstPerson() const { return m_PlayCamDistance <= m_PlayCamFPThreshold; }
+
     void EnterPlayMode()
     {
         m_SavedScene = m_Objects;
@@ -538,11 +544,17 @@ public:
             (int)m_PlayStaticColliders.size(),
             m_Objects[playerIdx].Position.x, m_Objects[playerIdx].Position.y, m_Objects[playerIdx].Position.z);
         m_Camera.SetProjectionMode(Purr::ProjectionMode::Perspective);
-        m_Camera.SetOrbitAngles(m_PlayCamAzimuth, m_PlayCamElevation);
-        s_PlayCameraAzimuthDeg = m_PlayCamAzimuth;
-        m_Camera.SetRadius(m_PlayCamDistance);
-        m_Camera.SetTarget(m_Objects[playerIdx].Position + glm::vec3(0.0f, m_PlayCamTargetHeight, 0.0f));
-
+        // Vue Play type Roblox : demarrage en 1re personne, molette pour eloigner (3e personne).
+        m_PlayCamDistance = glm::clamp(0.22f, m_PlayCamMinDist, m_PlayCamMaxDist);
+        m_PlayCamTargetHeight = glm::max(0.26f, 0.82f * m_CurrentPlayerScale.y);
+        m_PlayFPYawDeg = m_Objects[playerIdx].Rotation.y + 180.0f;
+        m_PlayFPPitchDeg = 0.0f;
+        m_PlayCamAzimuth = m_PlayFPYawDeg;
+        m_PlayCamElevation = 18.0f;
+        s_PlayCameraAzimuthDeg = m_PlayFPYawDeg;
+        m_PlayCameraPrevFirstPerson = false;
+        s_PlayCameraFirstPerson = IsPlayFirstPerson();
+        UpdatePlayCamera(m_Objects[playerIdx], 0.016f);
 
         // Attacher le script de mouvement
         m_Objects[playerIdx].Script = std::make_unique<CatScript>();
@@ -559,6 +571,9 @@ public:
 
     void StopPlayMode()
     {
+        s_PlayCameraFirstPerson = false;
+        m_PlayCameraPrevFirstPerson = false;
+        RestorePlayCursorAfterPlay();
         m_Objects = m_SavedScene;
         m_State = EngineState::Editor;
         m_Camera.SetProjectionMode(m_SavedCamera.Mode);
@@ -582,7 +597,7 @@ public:
             auto& obj = m_Objects[i];
             // Modèles .obj (Custom) : visuel seulement — pas d'AABB par sous-mesh (trop imprécis pour les maps).
             // Collision = uniquement les primitives Cube / Plan placées à la main (voir « Collider invisible »).
-            if (obj.Type == PrimitiveType::Custom)
+            if (obj.Type == PrimitiveType::Custom || obj.Type == PrimitiveType::Folder)
                 continue;
 
             if (obj.Type == PrimitiveType::Cube || obj.Type == PrimitiveType::Plane) {
@@ -778,9 +793,62 @@ public:
 
     void UpdatePlayCamera(const SceneObject& player, float dt)
     {
-        glm::vec3 desiredTarget = player.Position + glm::vec3(0.0f, m_PlayCamTargetHeight, 0.0f);
-        glm::vec3 smoothed = glm::mix(m_Camera.GetTarget(), desiredTarget, glm::clamp(dt * m_PlayCamFollowSpeed, 0.0f, 1.0f));
-        m_Camera.SetTarget(smoothed);
+        const bool fp = IsPlayFirstPerson();
+        glm::vec3 base = player.GetWorldPosition(m_Objects);
+
+        if (!fp && m_PlayCameraPrevFirstPerson) {
+            m_Camera.SetOrbitAngles(m_PlayFPYawDeg, glm::clamp(m_PlayFPPitchDeg, -45.0f, 80.0f));
+        }
+
+        if (fp) {
+            // 1P : position type "yeux" + léger décalage vers l'avant ; direction = yaw/pitch (pas orbite au-dessus de la tête).
+            float yR = glm::radians(m_PlayFPYawDeg);
+            float pR = glm::radians(m_PlayFPPitchDeg);
+            glm::vec3 fwd(
+                -cosf(yR) * cosf(pR),
+                sinf(pR),
+                -sinf(yR) * cosf(pR));
+            fwd = glm::normalize(fwd);
+            glm::vec3 flatFwd(-cosf(yR), 0.0f, -sinf(yR));
+            const float flatLenSq = flatFwd.x * flatFwd.x + flatFwd.y * flatFwd.y + flatFwd.z * flatFwd.z;
+            if (flatLenSq > 1e-8f)
+                flatFwd = glm::normalize(flatFwd);
+
+            float eyeY = glm::max(0.18f, m_PlayFPEyeHeightScale * player.Scale.y);
+            glm::vec3 eye = base + glm::vec3(0.0f, eyeY, 0.0f) + flatFwd * (m_PlayFPEyeForwardScale * player.Scale.y);
+
+            const float R = m_PlayFPSphereRadius;
+            glm::vec3 target = eye + fwd * R;
+            glm::vec3 v = -fwd;
+            float elRad = glm::asin(glm::clamp(v.y, -1.0f, 1.0f));
+            float cosEl = cosf(elRad);
+            float azRad = (std::fabs(cosEl) > 1e-4f) ? atan2f(v.z, v.x) : 0.0f;
+
+            m_Camera.SetTarget(target);
+            m_Camera.SetRadius(R);
+            m_Camera.SetOrbitAngles(glm::degrees(azRad), glm::degrees(elRad));
+        }
+        else {
+            glm::vec3 desiredTarget = base + glm::vec3(0.0f, m_PlayCamTargetHeight, 0.0f);
+            glm::vec3 smoothed = glm::mix(m_Camera.GetTarget(), desiredTarget, glm::clamp(dt * m_PlayCamFollowSpeed, 0.0f, 1.0f));
+            m_Camera.SetTarget(smoothed);
+            m_Camera.SetRadius(m_PlayCamDistance);
+            m_PlayFPYawDeg = m_Camera.GetAzimuth();
+            m_PlayFPPitchDeg = m_Camera.GetElevation();
+        }
+
+        m_PlayCameraPrevFirstPerson = fp;
+    }
+
+    void ApplyOpacityRecursive(int rootIdx, float opacity)
+    {
+        if (rootIdx < 0 || rootIdx >= (int)m_Objects.size()) return;
+        opacity = glm::clamp(opacity, 0.0f, 1.0f);
+        m_Objects[rootIdx].Opacity = opacity;
+        for (int j = 0; j < (int)m_Objects.size(); ++j) {
+            if (m_Objects[j].ParentIndex == rootIdx)
+                ApplyOpacityRecursive(j, opacity);
+        }
     }
 
 
@@ -799,6 +867,28 @@ public:
 
     void OnAttach() override { Purr::RenderCommand::EnableDepthTest(); }
 
+    void SyncPlayCursorAndImGui()
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        Purr::Window& win = Purr::Application::Get().GetWindow();
+        const bool fp = (m_State == EngineState::Playing && IsPlayFirstPerson());
+        if (fp) {
+            win.SetCursorMode(Purr::CursorMode::Disabled);
+            io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+        }
+        else {
+            win.SetCursorMode(Purr::CursorMode::Normal);
+            io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+        }
+    }
+
+    void RestorePlayCursorAfterPlay()
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        Purr::Application::Get().GetWindow().SetCursorMode(Purr::CursorMode::Normal);
+        io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+    }
+
     void OnUpdate(float dt) override
     {
         // Resize framebuffer si viewport a change
@@ -813,6 +903,7 @@ public:
         }
 
         ImGuiIO& io = ImGui::GetIO();
+        SyncPlayCursorAndImGui();
         if (m_State == EngineState::Editor)
         {
 
@@ -1017,15 +1108,35 @@ public:
         } // fin du mode Editor *_*
         else if (m_State == EngineState::Playing)
         {
-            // Orbit camera en Play pour explorer la map.
-            if (m_ViewportHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
+            // 3e personne : orbite au clic droit. 1re personne : pas d'orbite souris ici (regard libre sans clic).
+            if (!IsPlayFirstPerson() && m_ViewportHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
                 m_Camera.Orbit(io.MouseDelta.x * 0.4f, -io.MouseDelta.y * 0.4f);
-            s_PlayCameraAzimuthDeg = m_Camera.GetAzimuth();
+            if (!IsPlayFirstPerson())
+                s_PlayCameraAzimuthDeg = m_Camera.GetAzimuth();
         }
 
         // Scripts — seulement en Play mode
         if (m_State == EngineState::Playing)
         {
+            // 1P : mouvement souris = tourner caméra + corps (sans clic), avant CatScript pour que WASD suivent le regard.
+            for (auto& obj : m_Objects) {
+                if (obj.Name != "Player") continue;
+                const bool fp = IsPlayFirstPerson();
+                s_PlayCameraFirstPerson = fp;
+                if (fp) {
+                    // Sens standard FPS : souris droite → regarde à droite (signe opposé à l’ancienne version).
+                    const float sens = m_PlayFPMouseSens;
+                    m_PlayFPYawDeg += io.MouseDelta.x * sens;
+                    m_PlayFPPitchDeg = glm::clamp(
+                        m_PlayFPPitchDeg - io.MouseDelta.y * sens,
+                        m_PlayFPPitchMinDeg, m_PlayFPPitchMaxDeg);
+                    s_PlayCameraAzimuthDeg = m_PlayFPYawDeg;
+                    // Mesh Roblox : +180° pour l'alignement visuel avec la caméra.
+                    obj.Rotation.y = m_PlayFPYawDeg + 180.0f;
+                }
+                break;
+            }
+
             float safeDt = glm::min(dt, 0.033f);
             for (auto& obj : m_Objects)
                 if (obj.Script) obj.Script->OnUpdate(safeDt);
@@ -1345,6 +1456,22 @@ public:
         uint64_t texID = m_Framebuffer->GetColorAttachmentID();
         ImGui::Image((ImTextureID)texID, size, ImVec2(0, 1), ImVec2(1, 0));
 
+        // Réticule 1P (curseur masqué par GLFW_CURSOR_DISABLED) : repère au centre du viewport.
+        if (m_State == EngineState::Playing && m_PlayCamDistance <= m_PlayCamFPThreshold) {
+            ImVec2 center = ImVec2(contentPos.x + size.x * 0.5f, contentPos.y + size.y * 0.5f);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const float h = 5.0f;
+            const float th = 2.0f;
+            const ImU32 outline = IM_COL32(0, 0, 0, 200);
+            const ImU32 fill = IM_COL32(255, 255, 255, 230);
+            auto line = [&](ImVec2 a, ImVec2 b, ImU32 c, float w) { dl->AddLine(a, b, c, w); };
+            line(ImVec2(center.x - h, center.y), ImVec2(center.x + h, center.y), outline, th + 2.0f);
+            line(ImVec2(center.x, center.y - h), ImVec2(center.x, center.y + h), outline, th + 2.0f);
+            line(ImVec2(center.x - h, center.y), ImVec2(center.x + h, center.y), fill, th);
+            line(ImVec2(center.x, center.y - h), ImVec2(center.x, center.y + h), fill, th);
+            dl->AddCircleFilled(center, 1.8f, fill);
+        }
+
         // ---- Toolbar gizmo (haut-gauche) — masquée en Play mode ----
         if (m_State == EngineState::Editor)
         {
@@ -1485,6 +1612,7 @@ public:
                 { "Polygone regulier", PrimitiveType::RegularPolygon},
                 { "Ellipse",           PrimitiveType::Ellipse       },
                 { "Sphere",            PrimitiveType::Sphere        },
+                { "Dossier",           PrimitiveType::Folder        },
             };
             for (auto& e : entries)
             {
@@ -1632,7 +1760,7 @@ public:
             ImGui::DragFloat("Spawn clearance", &m_AutoSpawnClearance, 0.01f, 0.0f, 1.0f);
             ImGui::Separator();
             ImGui::Text("Play camera");
-            ImGui::DragFloat("Distance", &m_PlayCamDistance, 0.05f, 2.0f, 30.0f);
+            ImGui::DragFloat("Distance", &m_PlayCamDistance, 0.05f, m_PlayCamMinDist, m_PlayCamMaxDist);
             ImGui::DragFloat("Azimuth", &m_PlayCamAzimuth, 0.5f, -180.0f, 180.0f);
             ImGui::DragFloat("Elevation", &m_PlayCamElevation, 0.5f, -45.0f, 80.0f);
             ImGui::DragFloat("Target Height", &m_PlayCamTargetHeight, 0.02f, 0.0f, 4.0f);
@@ -1745,48 +1873,55 @@ public:
             if (ImGui::Checkbox("Collider invisible (jeu)", &obj.IsColliderOnly))
                 SaveSnapshot();
             ImGui::SliderFloat("Opacite (vue)", &obj.Opacity, 0.0f, 1.0f, "%.2f");
+            if (obj.Type == PrimitiveType::Folder && ImGui::IsItemEdited())
+                ApplyOpacityRecursive(m_Selected, glm::clamp(obj.Opacity, 0.0f, 1.0f));
             if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
             if (ImGui::Checkbox("Masque dans la liste Scene", &obj.HiddenInHierarchy))
                 SaveSnapshot();
             ImGui::Separator();
-            ImGui::Text("Texture");
-            if (obj.Tex && !obj.TexPath.empty()) {
-                std::string fn = obj.TexPath.substr(obj.TexPath.find_last_of("/\\") + 1);
-                ImGui::TextColored({ 0.5f,1.0f,0.5f,1.0f }, "%s", fn.c_str());
-            }
-            else { ImGui::TextDisabled("Aucune texture"); }
-            if (ImGui::Button("Charger texture...")) {
-                //std::string path = OpenFileDialog();
-                std::string path = OpenFileDialog("Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tga\0All Files\0*.*\0");
-                if (!path.empty()) { obj.Tex = Purr::TextureManager::Load(path); obj.TexPath = path; }
-            }
-            if (obj.Tex) { ImGui::SameLine(); if (ImGui::Button("Retirer")) { obj.Tex = nullptr; obj.TexPath = ""; } }
-            ImGui::Separator();
-            ImGui::Text("Materiau");
-            static const char* presetNames[] = { "Personnalise","Or","Plastique rouge","Caoutchouc" };
-            static int presetIdx = 0;
-            if (ImGui::Combo("##preset", &presetIdx, presetNames, 4)) {
-                switch (presetIdx) {
-                case 1: obj.Mat.Ambient = { 0.25f,0.20f,0.07f }; obj.Mat.Diffuse = { 0.75f,0.61f,0.23f }; obj.Mat.Specular = { 0.63f,0.56f,0.37f }; obj.Mat.Shininess = 51.2f; break;
-                case 2: obj.Mat.Ambient = { 0.05f,0,0 }; obj.Mat.Diffuse = { 0.5f,0,0 }; obj.Mat.Specular = { 0.7f,0.6f,0.6f }; obj.Mat.Shininess = 32.0f; break;
-                case 3: obj.Mat.Ambient = { 0.02f,0.02f,0.02f }; obj.Mat.Diffuse = { 0.01f,0.01f,0.01f }; obj.Mat.Specular = { 0.4f,0.4f,0.4f }; obj.Mat.Shininess = 10.0f; break;
-                default: break;
+            if (obj.Type != PrimitiveType::Folder) {
+                ImGui::Text("Texture");
+                if (obj.Tex && !obj.TexPath.empty()) {
+                    std::string fn = obj.TexPath.substr(obj.TexPath.find_last_of("/\\") + 1);
+                    ImGui::TextColored({ 0.5f,1.0f,0.5f,1.0f }, "%s", fn.c_str());
                 }
+                else { ImGui::TextDisabled("Aucune texture"); }
+                if (ImGui::Button("Charger texture...")) {
+                    //std::string path = OpenFileDialog();
+                    std::string path = OpenFileDialog("Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tga\0All Files\0*.*\0");
+                    if (!path.empty()) { obj.Tex = Purr::TextureManager::Load(path); obj.TexPath = path; }
+                }
+                if (obj.Tex) { ImGui::SameLine(); if (ImGui::Button("Retirer")) { obj.Tex = nullptr; obj.TexPath = ""; } }
+                ImGui::Separator();
+                ImGui::Text("Materiau");
+                static const char* presetNames[] = { "Personnalise","Or","Plastique rouge","Caoutchouc" };
+                static int presetIdx = 0;
+                if (ImGui::Combo("##preset", &presetIdx, presetNames, 4)) {
+                    switch (presetIdx) {
+                    case 1: obj.Mat.Ambient = { 0.25f,0.20f,0.07f }; obj.Mat.Diffuse = { 0.75f,0.61f,0.23f }; obj.Mat.Specular = { 0.63f,0.56f,0.37f }; obj.Mat.Shininess = 51.2f; break;
+                    case 2: obj.Mat.Ambient = { 0.05f,0,0 }; obj.Mat.Diffuse = { 0.5f,0,0 }; obj.Mat.Specular = { 0.7f,0.6f,0.6f }; obj.Mat.Shininess = 32.0f; break;
+                    case 3: obj.Mat.Ambient = { 0.02f,0.02f,0.02f }; obj.Mat.Diffuse = { 0.01f,0.01f,0.01f }; obj.Mat.Specular = { 0.4f,0.4f,0.4f }; obj.Mat.Shininess = 10.0f; break;
+                    default: break;
+                    }
+                }
+                // RBG / HSV 
+                //ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse));
+                ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse), ImGuiColorEditFlags_PickerHueWheel);
+
+
+                // ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular));
+                ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular), ImGuiColorEditFlags_PickerHueWheel);
+
+
+                ImGui::SliderFloat("Brillance", &obj.Mat.Shininess, 1.0f, 256.0f);
+                ImGui::Separator();
+                ImGui::Text("Modele d'illumination");
+                int model = (int)obj.Mat.Model;
+                if (ImGui::Combo("##illum", &model, s_ModelNames, 3)) obj.Mat.Model = (IlluminationModel)model;
             }
-            // RBG / HSV 
-            //ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse));
-            ImGui::ColorEdit3("Diffuse", glm::value_ptr(obj.Mat.Diffuse), ImGuiColorEditFlags_PickerHueWheel);
-
-
-            // ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular));
-            ImGui::ColorEdit3("Speculaire", glm::value_ptr(obj.Mat.Specular), ImGuiColorEditFlags_PickerHueWheel);
-
-
-            ImGui::SliderFloat("Brillance", &obj.Mat.Shininess, 1.0f, 256.0f);
-            ImGui::Separator();
-            ImGui::Text("Modele d'illumination");
-            int model = (int)obj.Mat.Model;
-            if (ImGui::Combo("##illum", &model, s_ModelNames, 3)) obj.Mat.Model = (IlluminationModel)model;
+            else {
+                ImGui::TextDisabled("Dossier : pas de mesh / texture (conteneur hierarchie).");
+            }
 
 
             // ---- Multi-sélection ----
@@ -1854,15 +1989,26 @@ public:
 
     void OnEvent(Purr::Event& e) override
     {
-        if (!m_ViewportHovered) return;
-
         Purr::EventDispatcher dispatcher(e);
 
-        // Scroll -> zoom camera
+        // Zoom caméra (éditeur + play). En 1P, on accepte le scroll même sans hover strict du viewport
+        // pour permettre de sortir du mode 1P exactement comme Roblox.
         dispatcher.Dispatch<Purr::MouseScrolledEvent>([this](Purr::MouseScrolledEvent& e) {
-            m_Camera.Zoom(e.GetYOffset() * 0.3f);
+            if (m_State == EngineState::Playing) {
+                if (!(m_ViewportHovered || IsPlayFirstPerson()))
+                    return false;
+                const float wheelStep = IsPlayFirstPerson() ? 0.55f : 0.35f;
+                m_PlayCamDistance = glm::clamp(
+                    m_PlayCamDistance - (float)e.GetYOffset() * wheelStep,
+                    m_PlayCamMinDist, m_PlayCamMaxDist);
+                if (!IsPlayFirstPerson())
+                    m_Camera.SetRadius(m_PlayCamDistance);
+                return false;
+            }
+            if (m_ViewportHovered)
+                m_Camera.Zoom(e.GetYOffset() * 0.3f);
             return false;
-            });
+        });
 
     }
 
@@ -1969,7 +2115,9 @@ public:
         {
             SceneObject obj;
             obj.Name = o["name"];
-            obj.Type = (PrimitiveType)(int)o["type"];
+            int typeInt = o.value("type", 0);
+            typeInt = glm::clamp(typeInt, 0, (int)PrimitiveType::Folder);
+            obj.Type = (PrimitiveType)typeInt;
             obj.MeshPath = o.value("meshPath", "");
             obj.TexPath = o.value("texPath", "");
             obj.Position = { o["pos"][0],   o["pos"][1],   o["pos"][2] };
@@ -2055,6 +2203,8 @@ private:
 
     std::shared_ptr<Purr::VertexArray> GetMeshForObject(SceneObject& obj)
     {
+        if (obj.Type == PrimitiveType::Folder)
+            return nullptr;
         if (obj.Type == PrimitiveType::Custom) {
             if (!obj.Parts.empty())
                 return obj.Parts.front().Mesh;
@@ -2822,6 +2972,18 @@ private:
     float                         m_PlayCamElevation = 20.0f;
     float                         m_PlayCamTargetHeight = 0.9f;
     float                         m_PlayCamFollowSpeed = 10.0f;
+    float                         m_PlayCamMinDist = 0.12f;
+    float                         m_PlayCamMaxDist = 28.0f;
+    float                         m_PlayCamFPThreshold = 1.05f;
+    float                         m_PlayFPYawDeg = 35.0f;
+    float                         m_PlayFPPitchDeg = 0.0f;
+    float                         m_PlayFPPitchMinDeg = -88.0f;
+    float                         m_PlayFPPitchMaxDeg = 88.0f;
+    float                         m_PlayFPMouseSens = 0.11f;
+    float                         m_PlayFPSphereRadius = 1.0f;
+    float                         m_PlayFPEyeHeightScale = 0.68f;
+    float                         m_PlayFPEyeForwardScale = 0.07f;
+    bool                          m_PlayCameraPrevFirstPerson = false;
     int                           m_ImGuiThemeIndex = 0;
 };
 

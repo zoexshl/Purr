@@ -24,6 +24,7 @@ namespace Purr {
 		}
 		void SetVSync(bool enabled) override;
 		bool IsVSync() const override;
+		void SetCursorMode(CursorMode mode) override;
 
 	private:
 		virtual void Init(const WindowProps& props);

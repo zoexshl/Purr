@@ -203,4 +203,10 @@ namespace Purr {
 		return m_Data.VSync;
 	}
 
+	void WindowsWindow::SetCursorMode(CursorMode mode)
+	{
+		int glfwMode = (mode == CursorMode::Disabled) ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
+		glfwSetInputMode(m_Window, GLFW_CURSOR, glfwMode);
+	}
+
 }

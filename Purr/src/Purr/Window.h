@@ -5,6 +5,9 @@
 
 namespace Purr {
 
+	/** Mode curseur GLFW, exposé sans dépendre de GLFW dans les applis. */
+	enum class CursorMode { Normal, Disabled };
+
 	struct WindowProps
 	{
 		std::string Title;
@@ -36,7 +39,7 @@ namespace Purr {
 		virtual void SetVSync(bool enabled) = 0;
 		virtual bool IsVSync() const = 0;
 
-
+		virtual void SetCursorMode(CursorMode mode) = 0;
 
 		static Window* Create(const WindowProps& props = WindowProps()); // Retourne un pointeur
 

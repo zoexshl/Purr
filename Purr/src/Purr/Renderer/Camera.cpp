@@ -32,7 +32,7 @@ namespace Purr {
 
     void Camera::Zoom(float delta)
     {
-        m_Radius = glm::max(m_Radius - delta, 0.5f);
+        m_Radius = glm::max(m_Radius - delta, 0.08f);
         RecalculateView();
         // ortho size scales with radius
         if (m_Mode == ProjectionMode::Orthographic)
@@ -47,7 +47,7 @@ namespace Purr {
 
     void Camera::SetRadius(float radius)
     {
-        m_Radius = glm::max(radius, 0.5f);
+        m_Radius = glm::max(radius, 0.08f);
         RecalculateView();
         if (m_Mode == ProjectionMode::Orthographic)
             RecalculateProjection();
