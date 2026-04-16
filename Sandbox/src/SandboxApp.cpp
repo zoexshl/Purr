@@ -812,6 +812,14 @@ public:
         return (m_PlayerAvatarChoice == PlayerAvatarChoice::Male) ? m_MaleAvatarSpawnOffset : m_FemaleAvatarSpawnOffset;
     }
 
+    glm::vec3 GetCurrentPlayerBaseScale() const
+    {
+        // Le male utilise un scale absolu cible (demande gameplay), le female suit le preset map.
+        if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male)
+            return glm::vec3(0.091f, 0.091f, 0.091f);
+        return glm::max(m_CurrentPlayerScale * GetAvatarScaleMultiplier(), glm::vec3(0.01f));
+    }
+
     void ImportFBXGrouped(const std::string& path)
     {
         auto meshes = LoadMeshFile(path);
@@ -920,10 +928,7 @@ public:
         player.MeshPath = GetSelectedPlayerMeshPath();
         PURR_INFO("Play avatar: {}", player.MeshPath);
         player.Position = (hasSpawnMarker ? markerSpawnPos : m_CurrentMapSpawn) + GetAvatarSpawnOffset();
-        if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male)
-            player.Scale = glm::vec3(0.091f, 0.091f, 0.091f);
-        else
-            player.Scale = glm::max(m_CurrentPlayerScale * GetAvatarScaleMultiplier(), glm::vec3(0.01f));
+        player.Scale = GetCurrentPlayerBaseScale();
         player.Mat.Diffuse = { 1.0f, 1.0f, 1.0f };  // blanc = texture pure
         player.Mat.Specular = { 0.3f, 0.3f, 0.3f };
         player.Mat.Shininess = 32.0f;
@@ -960,7 +965,7 @@ public:
         s_PlayCameraFirstPerson = IsPlayFirstPerson();
         UpdatePlayCamera(m_Objects[playerIdx], 0.016f);
 
-        SpawnBazookaForPlayer(playerIdx);
+        m_PlayBazookaEquipped = false;
         // Important: le push du bazooka peut reallouer m_Objects.
         // On attache donc le script APRES pour ne pas le perdre (copy ctor => Script=nullptr).
         m_Objects[playerIdx].Script = std::make_unique<CatScript>();
@@ -994,6 +999,7 @@ public:
         m_PlayerBridgeTime = 0.0f;
         m_Projectiles.clear();
         m_BazookaCooldownTimer = 0.0f;
+        m_PlayBazookaEquipped = false;
         m_Selection.clear();
         m_Selected = -1;
 
@@ -1415,8 +1421,6 @@ public:
         PlayerAnimState newState = PlayerAnimState::Idle;
         if (!m_PlayerOnGround)
             newState = (m_PlayerVelocity.y > 0.05f) ? PlayerAnimState::Jump : PlayerAnimState::Fall;
-        else if (horizSpeed > 0.15f)
-            newState = PlayerAnimState::Walk;
 
         if (newState != m_PlayerAnimState) {
             m_PlayerAnimState = newState;
@@ -1425,9 +1429,17 @@ public:
 
         const std::vector<KeyframeTRS>* keysPtr = &m_PlayerIdleKeys;
         float speedMul = 1.2f;
-        if (m_PlayerAnimState == PlayerAnimState::Walk) { keysPtr = &m_PlayerWalkKeys; speedMul = 2.6f; }
-        else if (m_PlayerAnimState == PlayerAnimState::Jump) { keysPtr = &m_PlayerJumpKeys; speedMul = 1.0f; }
+        if (m_PlayerAnimState == PlayerAnimState::Jump) { keysPtr = &m_PlayerJumpKeys; speedMul = 1.0f; }
         else if (m_PlayerAnimState == PlayerAnimState::Fall) { keysPtr = &m_PlayerFallKeys; speedMul = 1.0f; }
+
+        // Pas d'animation idle: on garde une pose neutre.
+        if (m_PlayerAnimState == PlayerAnimState::Idle) {
+            player.Scale = GetCurrentPlayerBaseScale();
+            player.Rotation.x = 0.0f;
+            player.Rotation.z = 0.0f;
+            return;
+        }
+
         const std::vector<KeyframeTRS>& keys = *keysPtr;
         if (keys.size() < 2) return;
 
@@ -1440,11 +1452,42 @@ public:
         float t = startT + rel;
         KeyframeTRS s = SampleKeys(keys, t);
 
-        // Bridge léger: on anime principalement l'échelle et un peu le roll,
-        // sans casser la physique/position ni le yaw gameplay.
-        player.Scale = glm::max(m_CurrentPlayerScale * s.Scale, glm::vec3(0.01f));
+        // Garder un collider stable: pas de scale anime sur le player gameplay.
+        // (sinon la physique change apres jump/fall et rend le deplacement bizarre)
+        player.Scale = GetCurrentPlayerBaseScale();
         player.Rotation.x = s.Rotation.x;
         player.Rotation.z = s.Rotation.z;
+    }
+
+    void UpdateEquippedBazookaAnimation(float dt, const SceneObject& player)
+    {
+        int bazIdx = FindObjectByName("PlayerBazooka");
+        if (bazIdx < 0 || bazIdx >= (int)m_Objects.size())
+            return;
+        SceneObject& baz = m_Objects[bazIdx];
+
+        // Pas d'idle sway: l'arme reste stable quand le joueur ne bouge pas.
+        const float horizSpeed = sqrtf(m_PlayerVelocity.x * m_PlayerVelocity.x + m_PlayerVelocity.z * m_PlayerVelocity.z);
+        const bool moving = (horizSpeed > 0.08f && m_PlayerOnGround);
+        const float freq = moving ? 10.0f : 0.0f;
+        const float ampPos = moving ? 0.020f : 0.0f;
+        const float ampRot = moving ? 5.0f : 0.0f;
+
+        m_BazookaAnimTime += dt * freq;
+        const float s = sinf(m_BazookaAnimTime);
+        const float c = cosf(m_BazookaAnimTime * 0.5f);
+
+        const bool isMaleAvatar = (m_PlayerAvatarChoice == PlayerAvatarChoice::Male);
+        const glm::vec3 parentScale = glm::max(glm::abs(player.Scale), glm::vec3(0.0001f));
+        const glm::vec3 invParentScale = glm::vec3(1.0f / parentScale.x, 1.0f / parentScale.y, 1.0f / parentScale.z);
+        // Offset desire en monde, converti en local pour rester cohérent meme avec un parent tres petit (male).
+        const glm::vec3 desiredWorldPos = isMaleAvatar
+            ? glm::vec3(0.16f, 0.19f, -0.08f)
+            : glm::vec3(0.12f, 0.17f, -0.06f);
+        glm::vec3 basePos = desiredWorldPos * invParentScale;
+
+        baz.Position = basePos + glm::vec3(0.0f, ampPos * s, ampPos * 0.5f * c);
+        baz.Rotation = { ampRot * 0.35f * s, -90.0f + ampRot * c, ampRot * 0.6f * s };
     }
 
     int FindObjectByName(const std::string& name)
@@ -1458,6 +1501,7 @@ public:
     {
         if (playerIdx < 0 || playerIdx >= (int)m_Objects.size()) return;
         if (FindObjectByName("PlayerBazooka") >= 0) return;
+        const SceneObject& player = m_Objects[playerIdx];
 
         SceneObject baz;
         baz.Name = "PlayerBazooka";
@@ -1468,9 +1512,16 @@ public:
         baz.Mat.Shininess = 24.0f;
         baz.Mat.Model = IlluminationModel::Phong;
         baz.ParentIndex = playerIdx;
-        baz.Position = { 0.23f * m_CurrentPlayerScale.x, 0.34f * m_CurrentPlayerScale.y, -0.03f * m_CurrentPlayerScale.z };
-        baz.Rotation = { 0.0f, 90.0f, 0.0f };
-        baz.Scale = { 0.35f * m_CurrentPlayerScale.x, 0.35f * m_CurrentPlayerScale.y, 0.35f * m_CurrentPlayerScale.z };
+        const bool isMaleAvatar = (m_PlayerAvatarChoice == PlayerAvatarChoice::Male);
+        const glm::vec3 parentScale = glm::max(glm::abs(player.Scale), glm::vec3(0.0001f));
+        const glm::vec3 invParentScale = glm::vec3(1.0f / parentScale.x, 1.0f / parentScale.y, 1.0f / parentScale.z);
+        const glm::vec3 desiredWorldPos = isMaleAvatar
+            ? glm::vec3(0.16f, 0.19f, -0.08f)
+            : glm::vec3(0.12f, 0.17f, -0.06f);
+        baz.Position = desiredWorldPos * invParentScale;
+        baz.Rotation = { 0.0f, -90.0f, 0.0f };
+        // Scale desire en monde = 1,1,1 meme avec parent scale tres petit.
+        baz.Scale = invParentScale;
         m_Objects.push_back(baz);
         GetMeshForObject(m_Objects.back());
     }
@@ -2038,8 +2089,12 @@ public:
             for (auto& obj : m_Objects) {
                 if (obj.Name == "Player") {
                     ResolvePlayerPhysics(obj, safeDt);
+                    UpdatePlayerBridgeAnimation(obj, safeDt);
                     UpdatePlayCamera(obj, safeDt);
-                    if (!io.WantTextInput && m_BazookaCooldownTimer <= 0.0f &&
+                    if (m_PlayBazookaEquipped)
+                        UpdateEquippedBazookaAnimation(safeDt, obj);
+                    if (m_PlayBazookaEquipped &&
+                        !io.WantTextInput && m_BazookaCooldownTimer <= 0.0f &&
                         ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                         (m_ViewportHovered || IsPlayFirstPerson()))
                         FireBazookaProjectile(obj);
@@ -2485,6 +2540,34 @@ public:
             line(ImVec2(center.x - h, center.y), ImVec2(center.x + h, center.y), fill, th);
             line(ImVec2(center.x, center.y - h), ImVec2(center.x, center.y + h), fill, th);
             dl->AddCircleFilled(center, 1.8f, fill);
+        }
+
+        // HUD inventaire style Roblox: slot transparent en bas-centre.
+        if (m_State == EngineState::Playing) {
+            const float slotW = 150.0f;
+            const float slotH = 52.0f;
+            const float slotX = m_ViewportPos.x + (m_ViewportSize.x - slotW) * 0.5f;
+            const float slotY = m_ViewportPos.y + m_ViewportSize.y - slotH - 14.0f;
+            ImGui::SetCursorScreenPos(ImVec2(slotX, slotY));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+            const ImVec4 normal = m_PlayBazookaEquipped ? ImVec4(0.30f, 0.58f, 0.95f, 0.55f) : ImVec4(0.10f, 0.10f, 0.10f, 0.35f);
+            ImGui::PushStyleColor(ImGuiCol_Button, normal);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.30f, 0.30f, 0.45f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.35f, 0.35f, 0.55f));
+            if (ImGui::Button("Bazooka", ImVec2(slotW, slotH))) {
+                m_PlayBazookaEquipped = !m_PlayBazookaEquipped;
+                if (m_PlayBazookaEquipped) {
+                    int pIdx = FindObjectByName("Player");
+                    if (pIdx >= 0) {
+                        SpawnBazookaForPlayer(pIdx);
+                        if (pIdx >= 0 && pIdx < (int)m_Objects.size() && m_Objects[pIdx].Script)
+                            m_Objects[pIdx].Script->Owner = &m_Objects[pIdx];
+                    }
+                }
+            }
+            ImGui::PopStyleColor(3);
+            ImGui::PopStyleVar(2);
         }
 
         // ---- Toolbar gizmo (gauche, sous la barre des vues) — masquee en Play mode ----
@@ -4430,11 +4513,13 @@ private:
     std::vector<Projectile>       m_Projectiles;
     float                         m_BazookaCooldown = 0.23f;
     float                         m_BazookaCooldownTimer = 0.0f;
+    bool                          m_PlayBazookaEquipped = false;
     float                         m_ProjectileSpeed = 15.0f;
     float                         m_ProjectileLifetime = 2.0f;
     float                         m_ProjectileGravity = -1.2f;
     float                         m_ExplosionRadius = 1.85f;
     float                         m_ExplosionForce = 6.0f;
+    float                         m_BazookaAnimTime = 0.0f;
     int                           m_ImGuiThemeIndex = 0;
 };
 
