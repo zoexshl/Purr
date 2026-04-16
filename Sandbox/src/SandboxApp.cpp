@@ -68,6 +68,13 @@ public:
     struct SceneObject* Owner = nullptr; // forward declare, assigné au Play
 };
 
+struct KeyframeTRS {
+    float Time = 0.0f;
+    glm::vec3 Position = { 0,0,0 };
+    glm::vec3 Rotation = { 0,0,0 };
+    glm::vec3 Scale = { 1,1,1 };
+};
+
 struct SceneObject {
     struct RenderPart {
         std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
@@ -91,6 +98,18 @@ struct SceneObject {
     bool IsColliderOnly = false;
     bool HiddenInHierarchy = false;
     float Opacity = 1.0f;
+    bool HasAnimation = false;
+    bool AnimationPlaying = false;
+    bool AnimationLoop = true;
+    float AnimationTime = 0.0f;
+    float AnimationSpeed = 1.0f;
+    std::vector<KeyframeTRS> AnimationKeys;
+    bool UseSpring = false;
+    glm::vec3 SpringAnchor = { 0,0,0 };
+    glm::vec3 SpringVelocity = { 0,0,0 };
+    float SpringK = 20.0f;
+    float SpringDamping = 5.0f;
+    float SpringMass = 1.0f;
     bool UseProceduralTexture = false;
     float ProceduralTexScale = 8.0f;
     /** Coordonnees cylindriques (plan XZ) : x = r*cos(theta), z = r*sin(theta), y = hauteur. Utilise si Type == PolarMarker. */
@@ -103,6 +122,10 @@ struct SceneObject {
         , Mat(o.Mat), Type(o.Type), Tex(o.Tex), TexPath(o.TexPath), MeshPath(o.MeshPath), Parts(o.Parts)
         , TexTiling(o.TexTiling), IsColliderOnly(o.IsColliderOnly)
         , HiddenInHierarchy(o.HiddenInHierarchy), Opacity(o.Opacity)
+        , HasAnimation(o.HasAnimation), AnimationPlaying(o.AnimationPlaying), AnimationLoop(o.AnimationLoop)
+        , AnimationTime(o.AnimationTime), AnimationSpeed(o.AnimationSpeed), AnimationKeys(o.AnimationKeys)
+        , UseSpring(o.UseSpring), SpringAnchor(o.SpringAnchor), SpringVelocity(o.SpringVelocity)
+        , SpringK(o.SpringK), SpringDamping(o.SpringDamping), SpringMass(o.SpringMass)
         , UseProceduralTexture(o.UseProceduralTexture), ProceduralTexScale(o.ProceduralTexScale)
         , PolarRadius(o.PolarRadius), PolarThetaDeg(o.PolarThetaDeg)
         , Script(nullptr) {
@@ -116,6 +139,18 @@ struct SceneObject {
         IsColliderOnly = o.IsColliderOnly;
         HiddenInHierarchy = o.HiddenInHierarchy;
         Opacity = o.Opacity;
+        HasAnimation = o.HasAnimation;
+        AnimationPlaying = o.AnimationPlaying;
+        AnimationLoop = o.AnimationLoop;
+        AnimationTime = o.AnimationTime;
+        AnimationSpeed = o.AnimationSpeed;
+        AnimationKeys = o.AnimationKeys;
+        UseSpring = o.UseSpring;
+        SpringAnchor = o.SpringAnchor;
+        SpringVelocity = o.SpringVelocity;
+        SpringK = o.SpringK;
+        SpringDamping = o.SpringDamping;
+        SpringMass = o.SpringMass;
         UseProceduralTexture = o.UseProceduralTexture;
         ProceduralTexScale = o.ProceduralTexScale;
         PolarRadius = o.PolarRadius;
@@ -526,6 +561,51 @@ public:
         m_RenamingIndex = -1;
     }
 
+    void BuildAnimationDemoOnSelection()
+    {
+        if (m_Selected < 0 || m_Selected >= (int)m_Objects.size())
+            return;
+
+        SaveSnapshot();
+        SceneObject& parent = m_Objects[m_Selected];
+
+        // Parent: translation + rotation avec interpolation.
+        parent.HasAnimation = true;
+        parent.AnimationLoop = true;
+        parent.AnimationPlaying = true;
+        parent.AnimationSpeed = 1.0f;
+        parent.AnimationTime = 0.0f;
+        parent.AnimationKeys.clear();
+        {
+            KeyframeTRS k0; k0.Time = 0.0f; k0.Position = parent.Position; k0.Rotation = parent.Rotation; k0.Scale = parent.Scale;
+            KeyframeTRS k1 = k0; k1.Time = 1.2f; k1.Position += glm::vec3(1.2f, 0.25f, 0.0f); k1.Rotation.y += 60.0f;
+            KeyframeTRS k2 = k0; k2.Time = 2.4f; k2.Position += glm::vec3(0.0f, 0.0f, 1.2f); k2.Rotation.y += 120.0f;
+            KeyframeTRS k3 = k0; k3.Time = 3.6f; k3.Position = k0.Position; k3.Rotation = k0.Rotation;
+            parent.AnimationKeys = { k0, k1, k2, k3 };
+        }
+
+        // Enfant de démo: animation locale propre pour montrer le graphe de scène.
+        SceneObject child;
+        child.Name = "AnimChild Demo";
+        child.Type = PrimitiveType::Cube;
+        child.ParentIndex = m_Selected;
+        child.Position = { 0.8f, 0.0f, 0.0f };
+        child.Scale = { 0.4f, 0.4f, 0.4f };
+        child.Mat.Diffuse = { 0.2f, 0.9f, 1.0f };
+        child.HasAnimation = true;
+        child.AnimationLoop = true;
+        child.AnimationPlaying = true;
+        child.AnimationSpeed = 1.0f;
+        child.AnimationTime = 0.0f;
+        {
+            KeyframeTRS c0; c0.Time = 0.0f; c0.Position = child.Position; c0.Rotation = child.Rotation; c0.Scale = child.Scale;
+            KeyframeTRS c1 = c0; c1.Time = 0.8f; c1.Position.y += 0.45f; c1.Scale = child.Scale * glm::vec3(1.0f, 1.35f, 1.0f);
+            KeyframeTRS c2 = c0; c2.Time = 1.6f; c2.Position = c0.Position;
+            child.AnimationKeys = { c0, c1, c2 };
+        }
+        m_Objects.push_back(child);
+    }
+
     bool IsPlayFirstPerson() const { return m_PlayCamDistance <= m_PlayCamFPThreshold; }
 
     void EnterPlayMode()
@@ -583,6 +663,7 @@ public:
         m_PlayCamElevation = 18.0f;
         s_PlayCameraAzimuthDeg = m_PlayFPYawDeg;
         m_PlayCameraPrevFirstPerson = false;
+        m_PlayerBridgeTime = 0.0f;
         s_PlayCameraFirstPerson = IsPlayFirstPerson();
         UpdatePlayCamera(m_Objects[playerIdx], 0.016f);
 
@@ -613,6 +694,7 @@ public:
         m_PlayStaticColliders.clear();
         m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
         m_PlayerOnGround = false;
+        m_PlayerBridgeTime = 0.0f;
         m_Selection.clear();
         m_Selected = m_Objects.empty() ? -1 : 0;
         if (m_Selected >= 0) m_Selection.insert(m_Selected);
@@ -891,6 +973,143 @@ public:
         }
     }
 
+    static float WrapAngleDelta(float to, float from)
+    {
+        float d = to - from;
+        while (d > 180.0f) d -= 360.0f;
+        while (d < -180.0f) d += 360.0f;
+        return d;
+    }
+
+    static void SortKeyframes(std::vector<KeyframeTRS>& keys)
+    {
+        std::sort(keys.begin(), keys.end(), [](const KeyframeTRS& a, const KeyframeTRS& b) { return a.Time < b.Time; });
+    }
+
+    static float GetAnimationDuration(const std::vector<KeyframeTRS>& keys)
+    {
+        if (keys.empty()) return 0.0f;
+        float d = keys.back().Time - keys.front().Time;
+        return glm::max(d, 0.0001f);
+    }
+
+    static KeyframeTRS SampleKeys(const std::vector<KeyframeTRS>& keys, float t)
+    {
+        if (keys.empty()) return {};
+        if (keys.size() == 1) return keys.front();
+        if (t <= keys.front().Time) return keys.front();
+        if (t >= keys.back().Time) return keys.back();
+
+        for (size_t i = 0; i + 1 < keys.size(); ++i) {
+            const auto& k0 = keys[i];
+            const auto& k1 = keys[i + 1];
+            if (t < k0.Time || t > k1.Time) continue;
+            float span = glm::max(k1.Time - k0.Time, 0.0001f);
+            float a = glm::clamp((t - k0.Time) / span, 0.0f, 1.0f);
+            KeyframeTRS out;
+            out.Time = t;
+            out.Position = glm::mix(k0.Position, k1.Position, a);
+            out.Scale = glm::mix(k0.Scale, k1.Scale, a);
+            out.Rotation.x = k0.Rotation.x + WrapAngleDelta(k1.Rotation.x, k0.Rotation.x) * a;
+            out.Rotation.y = k0.Rotation.y + WrapAngleDelta(k1.Rotation.y, k0.Rotation.y) * a;
+            out.Rotation.z = k0.Rotation.z + WrapAngleDelta(k1.Rotation.z, k0.Rotation.z) * a;
+            return out;
+        }
+        return keys.back();
+    }
+
+    void UpdateClassicAnimations(float dt)
+    {
+        for (auto& obj : m_Objects) {
+            if (!obj.HasAnimation || !obj.AnimationPlaying || obj.AnimationKeys.size() < 2)
+                continue;
+
+            SortKeyframes(obj.AnimationKeys);
+            float startT = obj.AnimationKeys.front().Time;
+            float endT = obj.AnimationKeys.back().Time;
+            float duration = GetAnimationDuration(obj.AnimationKeys);
+            obj.AnimationTime += dt * glm::max(0.01f, obj.AnimationSpeed);
+
+            if (obj.AnimationLoop) {
+                float rel = obj.AnimationTime - startT;
+                while (rel > duration) rel -= duration;
+                while (rel < 0.0f) rel += duration;
+                obj.AnimationTime = startT + rel;
+            }
+            else {
+                obj.AnimationTime = glm::clamp(obj.AnimationTime, startT, endT);
+            }
+
+            KeyframeTRS s = SampleKeys(obj.AnimationKeys, obj.AnimationTime);
+            obj.Position = s.Position;
+            obj.Rotation = s.Rotation;
+            obj.Scale = glm::max(s.Scale, glm::vec3(0.001f));
+            if (obj.Type == PrimitiveType::PolarMarker)
+                obj.PolarSyncPolarFromCartesianXZ();
+        }
+    }
+
+    void UpdateSpringAnimations(float dt)
+    {
+        float safeDt = glm::min(dt, 0.033f);
+        for (auto& obj : m_Objects) {
+            if (!obj.UseSpring)
+                continue;
+
+            glm::vec3 disp = obj.Position - obj.SpringAnchor;
+            float invMass = 1.0f / glm::max(0.01f, obj.SpringMass);
+            glm::vec3 force = -obj.SpringK * disp - obj.SpringDamping * obj.SpringVelocity;
+            glm::vec3 acc = force * invMass;
+            obj.SpringVelocity += acc * safeDt;
+            obj.Position += obj.SpringVelocity * safeDt;
+            if (obj.Type == PrimitiveType::PolarMarker)
+                obj.PolarSyncPolarFromCartesianXZ();
+        }
+    }
+
+    void EnsurePlayerAnimKeys(SceneObject& player)
+    {
+        if (m_PlayerIdleKeys.empty()) {
+            KeyframeTRS a; a.Time = 0.0f; a.Scale = { 1.0f,1.0f,1.0f };
+            KeyframeTRS b; b.Time = 0.5f; b.Scale = { 1.0f,1.03f,1.0f };
+            KeyframeTRS c; c.Time = 1.0f; c.Scale = { 1.0f,1.0f,1.0f };
+            m_PlayerIdleKeys = { a,b,c };
+        }
+        if (m_PlayerWalkKeys.empty()) {
+            KeyframeTRS a; a.Time = 0.0f; a.Scale = { 1.0f,1.0f,1.0f }; a.Rotation = { 0,0,-2.5f };
+            KeyframeTRS b; b.Time = 0.2f; b.Scale = { 1.0f,1.06f,1.0f }; b.Rotation = { 0,0,2.5f };
+            KeyframeTRS c; c.Time = 0.4f; c.Scale = { 1.0f,1.0f,1.0f }; c.Rotation = { 0,0,-2.5f };
+            m_PlayerWalkKeys = { a,b,c };
+        }
+
+        player.HasAnimation = true;
+        player.AnimationPlaying = true;
+        player.AnimationLoop = true;
+    }
+
+    void UpdatePlayerBridgeAnimation(SceneObject& player, float dt)
+    {
+        EnsurePlayerAnimKeys(player);
+        float horizSpeed = sqrtf(m_PlayerVelocity.x * m_PlayerVelocity.x + m_PlayerVelocity.z * m_PlayerVelocity.z);
+        bool walking = horizSpeed > 0.15f;
+        const std::vector<KeyframeTRS>& keys = walking ? m_PlayerWalkKeys : m_PlayerIdleKeys;
+        if (keys.size() < 2) return;
+
+        m_PlayerBridgeTime += dt * (walking ? 2.6f : 1.2f);
+        float startT = keys.front().Time;
+        float duration = GetAnimationDuration(keys);
+        float rel = m_PlayerBridgeTime - startT;
+        while (rel > duration) rel -= duration;
+        while (rel < 0.0f) rel += duration;
+        float t = startT + rel;
+        KeyframeTRS s = SampleKeys(keys, t);
+
+        // Bridge léger: on anime principalement l'échelle et un peu le roll,
+        // sans casser la physique/position ni le yaw gameplay.
+        player.Scale = glm::max(m_CurrentPlayerScale * s.Scale, glm::vec3(0.01f));
+        player.Rotation.z = s.Rotation.z;
+    }
+
     void EnsureAuxFramebuffer(std::shared_ptr<Purr::Framebuffer>& fb, const glm::vec2& sz)
     {
         if (sz.x <= 2.0f || sz.y <= 2.0f)
@@ -1084,6 +1303,9 @@ public:
 
         ImGuiIO& io = ImGui::GetIO();
         SyncPlayCursorAndImGui();
+        UpdateClassicAnimations(dt);
+        if (m_State != EngineState::Playing)
+            UpdateSpringAnimations(dt);
         if (m_State == EngineState::Editor)
         {
 
@@ -1333,10 +1555,12 @@ public:
             for (auto& obj : m_Objects) {
                 if (obj.Name == "Player") {
                     ResolvePlayerPhysics(obj, safeDt);
+                    UpdatePlayerBridgeAnimation(obj, safeDt);
                     UpdatePlayCamera(obj, safeDt);
                     break;
                 }
             }
+            UpdateSpringAnimations(safeDt);
         }
 
 
@@ -1868,6 +2092,18 @@ public:
             }
             ImGui::Separator();
         }
+        ImGui::Text("Animation demo");
+        if (ImGui::Button("Generer demo sur selection", ImVec2(220.0f, 0.0f)))
+            BuildAnimationDemoOnSelection();
+        ImGui::SameLine();
+        if (ImGui::Button("Play toutes anims", ImVec2(150.0f, 0.0f))) {
+            for (auto& o : m_Objects)
+                if (o.HasAnimation && !o.AnimationKeys.empty())
+                    o.AnimationPlaying = true;
+        }
+        ImGui::TextDisabled("Selectionne un objet parent, puis 'Generer demo' pour creer parent+enfant animes.");
+        ImGui::Separator();
+
         bool isPersp = (m_Camera.GetProjectionMode() == Purr::ProjectionMode::Perspective);
         if (ImGui::RadioButton("Perspective", isPersp))  m_Camera.SetProjectionMode(Purr::ProjectionMode::Perspective);
         ImGui::SameLine();
@@ -2232,6 +2468,82 @@ public:
             if (ImGui::Checkbox("Masque dans la liste Scene", &obj.HiddenInHierarchy))
                 SaveSnapshot();
             ImGui::Separator();
+
+            ImGui::Text("Animation classique");
+            if (ImGui::Checkbox("Activer animation", &obj.HasAnimation))
+                SaveSnapshot();
+            if (obj.HasAnimation) {
+                ImGui::Checkbox("Loop", &obj.AnimationLoop);
+                ImGui::DragFloat("Vitesse anim", &obj.AnimationSpeed, 0.05f, 0.05f, 5.0f);
+                if (ImGui::Button("Play")) obj.AnimationPlaying = true;
+                ImGui::SameLine();
+                if (ImGui::Button("Pause")) obj.AnimationPlaying = false;
+                ImGui::SameLine();
+                if (ImGui::Button("Stop")) {
+                    obj.AnimationPlaying = false;
+                    obj.AnimationTime = obj.AnimationKeys.empty() ? 0.0f : obj.AnimationKeys.front().Time;
+                }
+                float animMin = obj.AnimationKeys.empty() ? 0.0f : obj.AnimationKeys.front().Time;
+                float animMax = obj.AnimationKeys.empty() ? 2.0f : obj.AnimationKeys.back().Time;
+                if (animMax < animMin + 0.001f) animMax = animMin + 2.0f;
+                ImGui::SliderFloat("Temps", &obj.AnimationTime, animMin, animMax, "%.2f");
+                if (ImGui::Button("Ajouter keyframe (t)")) {
+                    SaveSnapshot();
+                    KeyframeTRS k;
+                    k.Time = obj.AnimationTime;
+                    k.Position = obj.Position;
+                    k.Rotation = obj.Rotation;
+                    k.Scale = obj.Scale;
+                    obj.AnimationKeys.push_back(k);
+                    SortKeyframes(obj.AnimationKeys);
+                }
+                if (!obj.AnimationKeys.empty()) {
+                    if (ImGui::TreeNode("Keyframes")) {
+                        int toDelete = -1;
+                        for (int i = 0; i < (int)obj.AnimationKeys.size(); ++i) {
+                            ImGui::PushID(i);
+                            auto& k = obj.AnimationKeys[i];
+                            ImGui::DragFloat("t", &k.Time, 0.02f, 0.0f, 300.0f);
+                            ImGui::SameLine();
+                            if (ImGui::Button("Suppr")) toDelete = i;
+                            ImGui::DragFloat3("Pos", glm::value_ptr(k.Position), 0.02f);
+                            ImGui::DragFloat3("Rot", glm::value_ptr(k.Rotation), 0.2f);
+                            ImGui::DragFloat3("Scale", glm::value_ptr(k.Scale), 0.02f, 0.001f, 100.0f);
+                            ImGui::Separator();
+                            ImGui::PopID();
+                        }
+                        if (ImGui::IsItemDeactivatedAfterEdit()) {
+                            SaveSnapshot();
+                            SortKeyframes(obj.AnimationKeys);
+                        }
+                        if (toDelete >= 0) {
+                            SaveSnapshot();
+                            obj.AnimationKeys.erase(obj.AnimationKeys.begin() + toDelete);
+                        }
+                        ImGui::TreePop();
+                    }
+                }
+                else {
+                    ImGui::TextDisabled("Aucun keyframe");
+                }
+            }
+
+            ImGui::Separator();
+            ImGui::Text("Animation physique (spring)");
+            if (ImGui::Checkbox("Activer spring", &obj.UseSpring))
+                SaveSnapshot();
+            if (obj.UseSpring) {
+                ImGui::DragFloat3("Anchor", glm::value_ptr(obj.SpringAnchor), 0.05f);
+                ImGui::DragFloat("k", &obj.SpringK, 0.1f, 0.0f, 200.0f);
+                ImGui::DragFloat("Damping", &obj.SpringDamping, 0.05f, 0.0f, 60.0f);
+                ImGui::DragFloat("Mass", &obj.SpringMass, 0.05f, 0.05f, 50.0f);
+                if (ImGui::Button("Anchor = pos")) obj.SpringAnchor = obj.Position;
+                ImGui::SameLine();
+                if (ImGui::Button("Kick +X")) obj.SpringVelocity += glm::vec3(2.5f, 0.0f, 0.0f);
+                if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
+            }
+
+            ImGui::Separator();
             if (obj.Type != PrimitiveType::Folder) {
                 if (obj.Type == PrimitiveType::PolarMarker)
                     ImGui::TextDisabled("Repere cylindrique (r, theta, Y) — transforme monde en cartesien pour le rendu.");
@@ -2460,6 +2772,26 @@ public:
             o["opacity"] = obj.Opacity;
             o["proceduralTex"] = obj.UseProceduralTexture;
             o["proceduralTexScale"] = obj.ProceduralTexScale;
+            o["hasAnimation"] = obj.HasAnimation;
+            o["animationPlaying"] = obj.AnimationPlaying;
+            o["animationLoop"] = obj.AnimationLoop;
+            o["animationTime"] = obj.AnimationTime;
+            o["animationSpeed"] = obj.AnimationSpeed;
+            o["animationKeys"] = json::array();
+            for (const auto& k : obj.AnimationKeys) {
+                json jk;
+                jk["t"] = k.Time;
+                jk["pos"] = { k.Position.x, k.Position.y, k.Position.z };
+                jk["rot"] = { k.Rotation.x, k.Rotation.y, k.Rotation.z };
+                jk["scale"] = { k.Scale.x, k.Scale.y, k.Scale.z };
+                o["animationKeys"].push_back(jk);
+            }
+            o["useSpring"] = obj.UseSpring;
+            o["springAnchor"] = { obj.SpringAnchor.x, obj.SpringAnchor.y, obj.SpringAnchor.z };
+            o["springVel"] = { obj.SpringVelocity.x, obj.SpringVelocity.y, obj.SpringVelocity.z };
+            o["springK"] = obj.SpringK;
+            o["springDamping"] = obj.SpringDamping;
+            o["springMass"] = obj.SpringMass;
             if (obj.Type == PrimitiveType::PolarMarker) {
                 o["polarRadius"] = obj.PolarRadius;
                 o["polarThetaDeg"] = obj.PolarThetaDeg;
@@ -2517,6 +2849,29 @@ public:
             obj.Opacity = o.value("opacity", 1.0f);
             obj.UseProceduralTexture = o.value("proceduralTex", false);
             obj.ProceduralTexScale = o.value("proceduralTexScale", 8.0f);
+            obj.HasAnimation = o.value("hasAnimation", false);
+            obj.AnimationPlaying = o.value("animationPlaying", false);
+            obj.AnimationLoop = o.value("animationLoop", true);
+            obj.AnimationTime = o.value("animationTime", 0.0f);
+            obj.AnimationSpeed = o.value("animationSpeed", 1.0f);
+            obj.AnimationKeys.clear();
+            if (o.contains("animationKeys") && o["animationKeys"].is_array()) {
+                for (auto& jk : o["animationKeys"]) {
+                    KeyframeTRS k;
+                    k.Time = jk.value("t", 0.0f);
+                    if (jk.contains("pos")) k.Position = { jk["pos"][0], jk["pos"][1], jk["pos"][2] };
+                    if (jk.contains("rot")) k.Rotation = { jk["rot"][0], jk["rot"][1], jk["rot"][2] };
+                    if (jk.contains("scale")) k.Scale = { jk["scale"][0], jk["scale"][1], jk["scale"][2] };
+                    obj.AnimationKeys.push_back(k);
+                }
+                SortKeyframes(obj.AnimationKeys);
+            }
+            obj.UseSpring = o.value("useSpring", false);
+            if (o.contains("springAnchor")) obj.SpringAnchor = { o["springAnchor"][0], o["springAnchor"][1], o["springAnchor"][2] };
+            if (o.contains("springVel")) obj.SpringVelocity = { o["springVel"][0], o["springVel"][1], o["springVel"][2] };
+            obj.SpringK = o.value("springK", 20.0f);
+            obj.SpringDamping = o.value("springDamping", 5.0f);
+            obj.SpringMass = o.value("springMass", 1.0f);
             if (obj.Type == PrimitiveType::PolarMarker) {
                 if (o.contains("polarRadius")) {
                     obj.PolarRadius = o["polarRadius"].get<float>();
@@ -3411,6 +3766,9 @@ private:
     float                         m_PlayFPEyeHeightScale = 0.68f;
     float                         m_PlayFPEyeForwardScale = 0.07f;
     bool                          m_PlayCameraPrevFirstPerson = false;
+    float                         m_PlayerBridgeTime = 0.0f;
+    std::vector<KeyframeTRS>      m_PlayerIdleKeys;
+    std::vector<KeyframeTRS>      m_PlayerWalkKeys;
     int                           m_ImGuiThemeIndex = 0;
 };
 
