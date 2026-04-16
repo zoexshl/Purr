@@ -886,6 +886,144 @@ public:
         }
     }
 
+    void EnsureAuxFramebuffer(std::shared_ptr<Purr::Framebuffer>& fb, const glm::vec2& sz)
+    {
+        if (sz.x <= 2.0f || sz.y <= 2.0f)
+            return;
+        uint32_t w = (uint32_t)sz.x, h = (uint32_t)sz.y;
+        if (!fb) {
+            Purr::FramebufferSpec spec;
+            spec.Width = w;
+            spec.Height = h;
+            fb = std::make_shared<Purr::Framebuffer>(spec);
+            return;
+        }
+        auto& spec = fb->GetSpec();
+        if (spec.Width != w || spec.Height != h)
+            fb->Resize(w, h);
+    }
+
+    void RenderSceneToFramebuffer(Purr::Camera& cam, const std::shared_ptr<Purr::Framebuffer>& target, bool drawEditorOverlays)
+    {
+        if (!target) return;
+        target->Bind();
+        Purr::RenderCommand::SetClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+        Purr::RenderCommand::Clear();
+
+        glm::mat4 invView = glm::inverse(cam.GetViewMatrix());
+        glm::vec3 camPos = glm::vec3(invView[3][0], invView[3][1], invView[3][2]);
+
+        auto uploadLights = [&](std::shared_ptr<Purr::Shader>& sh) {
+            sh->SetMat4("u_VP", cam.GetViewProjection());
+            sh->SetFloat3("u_CamPos", camPos);
+            sh->SetFloat("u_AmbientStrength", m_AmbientStrength);
+            for (int i = 0; i < 4; i++) {
+                std::string b = "u_Lights[" + std::to_string(i) + "].";
+                sh->SetFloat3(b + "Position", m_Lights[i].Position);
+                sh->SetFloat3(b + "Color", m_Lights[i].Color);
+                sh->SetFloat(b + "Intensity", m_Lights[i].Enabled ? m_Lights[i].Intensity : 0.0f);
+                sh->SetFloat(b + "Constant", m_Lights[i].Constant);
+                sh->SetFloat(b + "Linear", m_Lights[i].Linear);
+                sh->SetFloat(b + "Quadratic", m_Lights[i].Quadratic);
+            }
+        };
+
+        auto drawObjectAtIndex = [&](int objIdx) {
+            SceneObject& obj = m_Objects[objIdx];
+            if (m_State == EngineState::Playing && obj.IsColliderOnly)
+                return;
+            glm::mat4 model = obj.GetWorldTransform(m_Objects);
+            glm::mat4 normalMat = glm::transpose(glm::inverse(model));
+            auto va = GetMeshForObject(obj);
+            if (!va) return;
+            const float op = glm::clamp(obj.Opacity, 0.0f, 1.0f);
+            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint) {
+                glm::vec3 finalDiffuse = obj.Mat.Diffuse * diffuseTint;
+                if (tex) {
+                    m_TexShader->Bind();
+                    uploadLights(m_TexShader);
+                    m_TexShader->SetMat4("u_Model", model);
+                    m_TexShader->SetMat4("u_NormalMat", normalMat);
+                    m_TexShader->SetFloat3("u_MatDiffuse", finalDiffuse);
+                    m_TexShader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                    m_TexShader->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                    m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
+                    m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    m_TexShader->SetFloat("u_Opacity", op);
+                    m_TexShader->SetInt("u_Texture", 0);
+                    tex->Bind(0);
+                    Purr::RenderCommand::DrawIndexed(mesh);
+                }
+                else {
+                    m_Shader->Bind();
+                    uploadLights(m_Shader);
+                    m_Shader->SetMat4("u_Model", model);
+                    m_Shader->SetMat4("u_NormalMat", normalMat);
+                    m_Shader->SetFloat3("u_MatAmbient", obj.Mat.Ambient);
+                    m_Shader->SetFloat3("u_MatDiffuse", finalDiffuse);
+                    m_Shader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                    m_Shader->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                    m_Shader->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    m_Shader->SetFloat("u_Opacity", op);
+                    Purr::RenderCommand::DrawIndexed(mesh);
+                }
+            };
+            if (obj.Type == PrimitiveType::Custom && !obj.Parts.empty()) {
+                for (auto& part : obj.Parts)
+                    if (part.Mesh) drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint);
+            }
+            else drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f));
+        };
+
+        struct TransparentDraw { int Idx = 0; float Dist = 0.0f; };
+        std::vector<TransparentDraw> transparent;
+        transparent.reserve(m_Objects.size());
+        for (int i = 0; i < (int)m_Objects.size(); i++) {
+            const SceneObject& o = m_Objects[i];
+            if (m_State == EngineState::Playing && o.IsColliderOnly) continue;
+            const float op = glm::clamp(o.Opacity, 0.0f, 1.0f);
+            if (op < 0.999f && op > 1e-4f) {
+                glm::vec3 wp = o.GetWorldPosition(m_Objects);
+                transparent.push_back({ i, glm::length(wp - camPos) });
+            }
+        }
+        std::sort(transparent.begin(), transparent.end(), [](const TransparentDraw& a, const TransparentDraw& b) { return a.Dist > b.Dist; });
+
+        Purr::RenderCommand::SetDepthWrite(true);
+        for (int i = 0; i < (int)m_Objects.size(); i++) {
+            const SceneObject& o = m_Objects[i];
+            if (m_State == EngineState::Playing && o.IsColliderOnly) continue;
+            const float op = glm::clamp(o.Opacity, 0.0f, 1.0f);
+            if (op < 0.999f) continue;
+            drawObjectAtIndex(i);
+        }
+        if (!transparent.empty()) {
+            Purr::RenderCommand::SetBlend(true);
+            Purr::RenderCommand::SetDepthWrite(false);
+            for (const auto& t : transparent) drawObjectAtIndex(t.Idx);
+            Purr::RenderCommand::SetDepthWrite(true);
+            Purr::RenderCommand::SetBlend(false);
+        }
+
+        if (drawEditorOverlays) {
+            m_WireShader->Bind();
+            m_WireShader->SetMat4("u_VP", cam.GetViewProjection());
+            for (int idx : m_Selection) {
+                if (idx < 0 || idx >= (int)m_Objects.size()) continue;
+                auto& obj = m_Objects[idx];
+                glm::mat4 model = obj.GetWorldTransform(m_Objects);
+                model = glm::rotate(model, glm::radians(obj.Rotation.x), { 1,0,0 });
+                model = glm::rotate(model, glm::radians(obj.Rotation.y), { 0,1,0 });
+                model = glm::rotate(model, glm::radians(obj.Rotation.z), { 0,0,1 });
+                model = glm::scale(model, glm::vec3(1.02f));
+                m_WireShader->SetMat4("u_Model", model);
+                m_BBoxVA->Bind();
+                Purr::RenderCommand::DrawLines(m_BBoxVA);
+            }
+        }
+        target->Unbind();
+    }
+
 
     void DeleteSelection()
     {
@@ -1453,6 +1591,50 @@ public:
         }
 
         m_Framebuffer->Unbind();
+
+        // Rendus simultanés supplémentaires pour sous-vues (agencement multi-fenêtres).
+        if (m_ViewLayout != MultiViewLayout::Single) {
+            EnsureAuxFramebuffer(m_ViewTopFramebuffer, m_AuxTopSize);
+            EnsureAuxFramebuffer(m_ViewFrontFramebuffer, m_AuxFrontSize);
+            EnsureAuxFramebuffer(m_ViewRightFramebuffer, m_AuxRightSize);
+
+            glm::vec3 focus = (m_Selected >= 0 && m_Selected < (int)m_Objects.size())
+                ? m_Objects[m_Selected].GetWorldPosition(m_Objects)
+                : m_Camera.GetTarget();
+            float baseRadius = glm::max(4.0f, m_Camera.GetRadius() * 1.15f);
+
+            if (m_ViewLayout == MultiViewLayout::Dual || m_ViewLayout == MultiViewLayout::Quad) {
+                if (m_ViewTopFramebuffer && m_AuxTopSize.x > 2.0f && m_AuxTopSize.y > 2.0f) {
+                    Purr::Camera camTop = m_Camera;
+                    camTop.SetProjectionMode(Purr::ProjectionMode::Perspective);
+                    camTop.SetAspectRatio(m_AuxTopSize.x / m_AuxTopSize.y);
+                    camTop.SetTarget(focus);
+                    camTop.SetOrbitAngles(-90.0f, -85.0f);
+                    camTop.SetRadius(baseRadius);
+                    RenderSceneToFramebuffer(camTop, m_ViewTopFramebuffer, false);
+                }
+            }
+            if (m_ViewLayout == MultiViewLayout::Quad) {
+                if (m_ViewFrontFramebuffer && m_AuxFrontSize.x > 2.0f && m_AuxFrontSize.y > 2.0f) {
+                    Purr::Camera camFront = m_Camera;
+                    camFront.SetProjectionMode(Purr::ProjectionMode::Perspective);
+                    camFront.SetAspectRatio(m_AuxFrontSize.x / m_AuxFrontSize.y);
+                    camFront.SetTarget(focus);
+                    camFront.SetOrbitAngles(-90.0f, 0.0f);
+                    camFront.SetRadius(baseRadius);
+                    RenderSceneToFramebuffer(camFront, m_ViewFrontFramebuffer, false);
+                }
+                if (m_ViewRightFramebuffer && m_AuxRightSize.x > 2.0f && m_AuxRightSize.y > 2.0f) {
+                    Purr::Camera camRight = m_Camera;
+                    camRight.SetProjectionMode(Purr::ProjectionMode::Perspective);
+                    camRight.SetAspectRatio(m_AuxRightSize.x / m_AuxRightSize.y);
+                    camRight.SetTarget(focus);
+                    camRight.SetOrbitAngles(0.0f, 0.0f);
+                    camRight.SetRadius(baseRadius);
+                    RenderSceneToFramebuffer(camRight, m_ViewRightFramebuffer, false);
+                }
+            }
+        }
     }
 
     void OnImGuiRender() override
@@ -1461,7 +1643,16 @@ public:
 
         // ---- Viewport -----------------------------------------------------
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        ImGui::Begin("Viewport");
+        ImGuiWindowFlags viewportFlags = ImGuiWindowFlags_None;
+        if (m_ViewportFullscreen) {
+            ImGuiViewport* vp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(vp->WorkPos);
+            ImGui::SetNextWindowSize(vp->WorkSize);
+            ImGui::SetNextWindowViewport(vp->ID);
+            viewportFlags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking;
+        }
+        ImGui::Begin("Viewport", nullptr, viewportFlags);
         m_ViewportHovered = ImGui::IsWindowHovered();
 
 
@@ -1497,13 +1688,72 @@ public:
 
         ImGui::SetCursorScreenPos(contentPos);
         ImVec2 size = ImGui::GetContentRegionAvail();
-        m_ViewportSize = { size.x, size.y };
-        uint64_t texID = m_Framebuffer->GetColorAttachmentID();
-        ImGui::Image((ImTextureID)texID, size, ImVec2(0, 1), ImVec2(1, 0));
+
+        const char* layoutLabels[] = { "1 vue", "2 vues", "4 vues" };
+        int layoutIdx = (int)m_ViewLayout;
+        ImGui::SetCursorScreenPos(ImVec2(contentPos.x + 8, contentPos.y + 8));
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::Combo("##view_layout", &layoutIdx, layoutLabels, 3);
+        m_ViewLayout = (MultiViewLayout)layoutIdx;
+        ImGui::SameLine();
+        if (ImGui::Button(m_ViewportFullscreen ? "Fenetre" : "Plein ecran"))
+            m_ViewportFullscreen = !m_ViewportFullscreen;
+
+        auto drawPanel = [&](const ImVec2& p, const ImVec2& s, uint64_t texId, const char* label) {
+            ImGui::SetCursorScreenPos(p);
+            ImGui::Image((ImTextureID)texId, s, ImVec2(0, 1), ImVec2(1, 0));
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddRect(p, ImVec2(p.x + s.x, p.y + s.y), IM_COL32(255, 255, 255, 80), 0.0f, 0, 1.0f);
+            dl->AddText(ImVec2(p.x + 6, p.y + 6), IM_COL32(255, 255, 255, 220), label);
+        };
+
+        const float pad = 4.0f;
+        ImVec2 viewOrigin = ImVec2(contentPos.x, contentPos.y + 34.0f);
+        ImVec2 viewSize = ImVec2(size.x, glm::max(1.0f, size.y - 34.0f));
+        m_AuxTopSize = { 0.0f, 0.0f };
+        m_AuxFrontSize = { 0.0f, 0.0f };
+        m_AuxRightSize = { 0.0f, 0.0f };
+
+        if (m_ViewLayout == MultiViewLayout::Single) {
+            m_ViewportPos = { viewOrigin.x, viewOrigin.y };
+            m_ViewportSize = { viewSize.x, viewSize.y };
+            drawPanel(viewOrigin, viewSize, m_Framebuffer->GetColorAttachmentID(), "Perspective");
+        }
+        else if (m_ViewLayout == MultiViewLayout::Dual) {
+            ImVec2 leftSz = ImVec2((viewSize.x - pad) * 0.62f, viewSize.y);
+            ImVec2 rightSz = ImVec2(viewSize.x - leftSz.x - pad, viewSize.y);
+            ImVec2 leftPos = viewOrigin;
+            ImVec2 rightPos = ImVec2(viewOrigin.x + leftSz.x + pad, viewOrigin.y);
+            m_ViewportPos = { leftPos.x, leftPos.y };
+            m_ViewportSize = { leftSz.x, leftSz.y };
+            m_AuxTopSize = { rightSz.x, rightSz.y };
+            drawPanel(leftPos, leftSz, m_Framebuffer->GetColorAttachmentID(), "Perspective");
+            uint64_t topTex = m_ViewTopFramebuffer ? m_ViewTopFramebuffer->GetColorAttachmentID() : m_Framebuffer->GetColorAttachmentID();
+            drawPanel(rightPos, rightSz, topTex, "Top");
+        }
+        else {
+            ImVec2 cellSz = ImVec2((viewSize.x - pad) * 0.5f, (viewSize.y - pad) * 0.5f);
+            ImVec2 p00 = viewOrigin;
+            ImVec2 p10 = ImVec2(viewOrigin.x + cellSz.x + pad, viewOrigin.y);
+            ImVec2 p01 = ImVec2(viewOrigin.x, viewOrigin.y + cellSz.y + pad);
+            ImVec2 p11 = ImVec2(viewOrigin.x + cellSz.x + pad, viewOrigin.y + cellSz.y + pad);
+            m_ViewportPos = { p00.x, p00.y };
+            m_ViewportSize = { cellSz.x, cellSz.y };
+            m_AuxTopSize = { cellSz.x, cellSz.y };
+            m_AuxFrontSize = { cellSz.x, cellSz.y };
+            m_AuxRightSize = { cellSz.x, cellSz.y };
+            drawPanel(p00, cellSz, m_Framebuffer->GetColorAttachmentID(), "Perspective");
+            uint64_t topTex = m_ViewTopFramebuffer ? m_ViewTopFramebuffer->GetColorAttachmentID() : m_Framebuffer->GetColorAttachmentID();
+            uint64_t frontTex = m_ViewFrontFramebuffer ? m_ViewFrontFramebuffer->GetColorAttachmentID() : m_Framebuffer->GetColorAttachmentID();
+            uint64_t rightTex = m_ViewRightFramebuffer ? m_ViewRightFramebuffer->GetColorAttachmentID() : m_Framebuffer->GetColorAttachmentID();
+            drawPanel(p10, cellSz, topTex, "Top");
+            drawPanel(p01, cellSz, frontTex, "Front");
+            drawPanel(p11, cellSz, rightTex, "Right");
+        }
 
         // Réticule 1P (curseur masqué par GLFW_CURSOR_DISABLED) : repère au centre du viewport.
         if (m_State == EngineState::Playing && m_PlayCamDistance <= m_PlayCamFPThreshold) {
-            ImVec2 center = ImVec2(contentPos.x + size.x * 0.5f, contentPos.y + size.y * 0.5f);
+            ImVec2 center = ImVec2(m_ViewportPos.x + m_ViewportSize.x * 0.5f, m_ViewportPos.y + m_ViewportSize.y * 0.5f);
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const float h = 5.0f;
             const float th = 2.0f;
@@ -1587,7 +1837,7 @@ public:
 
             if (m_State == EngineState::Playing) {
                 ImGui::SetCursorScreenPos(ImVec2(cx + btnW + 8, contentPos.y + 12));
-                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.4f, 0.9f), " * PLAYING  [Space] = stop");
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.4f, 0.9f), " * PLAYING  [Esc] = stop");
             }
         }
 
@@ -1992,11 +2242,26 @@ public:
                 ImGui::Text("Materiau");
                 static const char* presetNames[] = { "Personnalise","Or","Plastique rouge","Caoutchouc" };
                 static int presetIdx = 0;
+                static constexpr const char* kMatTexGold = "assets/models/materials/gold_texture.jpg";
+                static constexpr const char* kMatTexRubber = "assets/models/materials/rubber_texture.jpg";
                 if (ImGui::Combo("##preset", &presetIdx, presetNames, 4)) {
+                    SaveSnapshot();
                     switch (presetIdx) {
-                    case 1: obj.Mat.Ambient = { 0.25f,0.20f,0.07f }; obj.Mat.Diffuse = { 0.75f,0.61f,0.23f }; obj.Mat.Specular = { 0.63f,0.56f,0.37f }; obj.Mat.Shininess = 51.2f; break;
-                    case 2: obj.Mat.Ambient = { 0.05f,0,0 }; obj.Mat.Diffuse = { 0.5f,0,0 }; obj.Mat.Specular = { 0.7f,0.6f,0.6f }; obj.Mat.Shininess = 32.0f; break;
-                    case 3: obj.Mat.Ambient = { 0.02f,0.02f,0.02f }; obj.Mat.Diffuse = { 0.01f,0.01f,0.01f }; obj.Mat.Specular = { 0.4f,0.4f,0.4f }; obj.Mat.Shininess = 10.0f; break;
+                    case 1:
+                        obj.Mat.Ambient = { 0.25f,0.20f,0.07f }; obj.Mat.Diffuse = { 0.75f,0.61f,0.23f }; obj.Mat.Specular = { 0.63f,0.56f,0.37f }; obj.Mat.Shininess = 51.2f;
+                        obj.Tex = Purr::TextureManager::Load(kMatTexGold);
+                        obj.TexPath = obj.Tex ? std::string(kMatTexGold) : "";
+                        break;
+                    case 2:
+                        obj.Mat.Ambient = { 0.05f,0,0 }; obj.Mat.Diffuse = { 0.5f,0,0 }; obj.Mat.Specular = { 0.7f,0.6f,0.6f }; obj.Mat.Shininess = 32.0f;
+                        obj.Tex = nullptr;
+                        obj.TexPath = "";
+                        break;
+                    case 3:
+                        obj.Mat.Ambient = { 0.02f,0.02f,0.02f }; obj.Mat.Diffuse = { 0.01f,0.01f,0.01f }; obj.Mat.Specular = { 0.4f,0.4f,0.4f }; obj.Mat.Shininess = 10.0f;
+                        obj.Tex = Purr::TextureManager::Load(kMatTexRubber);
+                        obj.TexPath = obj.Tex ? std::string(kMatTexRubber) : "";
+                        break;
                     default: break;
                     }
                 }
@@ -3035,7 +3300,16 @@ private:
     std::shared_ptr<Purr::Shader>       m_Shader, m_TexShader, m_WireShader;
     std::shared_ptr<Purr::Texture>      m_CheckerTex, m_PlayButtonTex, m_StopButtonTex;
     std::shared_ptr<Purr::Framebuffer>  m_Framebuffer;
+    std::shared_ptr<Purr::Framebuffer>  m_ViewTopFramebuffer;
+    std::shared_ptr<Purr::Framebuffer>  m_ViewFrontFramebuffer;
+    std::shared_ptr<Purr::Framebuffer>  m_ViewRightFramebuffer;
     Purr::Camera                        m_Camera;
+    enum class MultiViewLayout { Single = 0, Dual, Quad };
+    MultiViewLayout                     m_ViewLayout = MultiViewLayout::Single;
+    bool                                m_ViewportFullscreen = false;
+    glm::vec2                           m_AuxTopSize = { 0.0f, 0.0f };
+    glm::vec2                           m_AuxFrontSize = { 0.0f, 0.0f };
+    glm::vec2                           m_AuxRightSize = { 0.0f, 0.0f };
 
     // Gizmo
     std::shared_ptr<Purr::VertexArray>  m_ArrowVA;
