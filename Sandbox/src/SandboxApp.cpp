@@ -332,6 +332,32 @@ private:
     enum class GizmoMode { Hand, Translate, Rotate, Scale };
 enum class PlayerAvatarChoice { Male = 0, Female };
 
+namespace {
+constexpr int kMaleEmoteSlotCount = 3;
+struct MaleEmoteSlotDef {
+    const char* UiLabel;
+    const char* RelPath;
+};
+constexpr MaleEmoteSlotDef kMaleEmoteSlotDefs[kMaleEmoteSlotCount] = {
+    { "Hip Hop", "assets/models/roblox/male_player/source/Hip Hop Dancing.fbx" },
+    { "Jog", "assets/models/roblox/male_player/source/Jog In Circle.fbx" },
+    { "Action pose", "assets/models/roblox/male_player/source/Male Action Pose.fbx" },
+};
+
+void SanitizeMaleEmoteClip(LoadedAnimationClip& clip)
+{
+    for (auto& ch : clip.Channels) {
+        ch.PositionKeys.clear();
+        ch.ScaleKeys.clear();
+    }
+    auto& chans = clip.Channels;
+    chans.erase(
+        std::remove_if(chans.begin(), chans.end(),
+            [](const LoadedNodeAnimation& ch) { return ch.NodeName == "metarig"; }),
+        chans.end());
+}
+} // namespace
+
 // -----------------------------------------------------------------------
 // ExampleLayer
 // -----------------------------------------------------------------------
@@ -833,32 +859,21 @@ public:
         return glm::max(m_CurrentPlayerScale * GetAvatarScaleMultiplier(), glm::vec3(0.01f));
     }
 
-    void TryLoadMaleHipHopClip()
+    void TryLoadMaleEmoteClips()
     {
-        m_MaleHipHopClipLoaded = false;
-        m_MaleHipHopClip = {};
-        LoadedAnimatedAsset animAsset = LoadAnimatedAsset("assets/models/roblox/male_player/source/Hip Hop Dancing.fbx");
-        if (!animAsset.Animations.empty()) {
-            m_MaleHipHopClip = animAsset.Animations.front();
-            // Emote sur place: pos/scale du clip Mixamo != bind 12.fbx (unites, facteurs 0.01, etc.) -> delta faux.
-            // On n'anime que les rotations; translations et echelles viennent du rest pose du mesh joueur.
-            for (auto& ch : m_MaleHipHopClip.Channels) {
-                ch.PositionKeys.clear();
-                ch.ScaleKeys.clear();
+        for (int i = 0; i < kMaleEmoteSlotCount; ++i) {
+            m_MaleEmoteClipLoaded[i] = false;
+            m_MaleEmoteClips[i] = {};
+            LoadedAnimatedAsset animAsset = LoadAnimatedAsset(kMaleEmoteSlotDefs[i].RelPath);
+            if (animAsset.Animations.empty()) {
+                PURR_WARN("Male emote clip missing or invalid: {}", kMaleEmoteSlotDefs[i].RelPath);
+                continue;
             }
-            // Hip hop: 'metarig' est une feuille quasi-identite; sur 12.fbx c'est un noeud collapse (scale + offset).
-            // Les rotation keys du clip desalignent tout le rig -> on garde la bind pose de 12.fbx pour ce noeud.
-            auto& chans = m_MaleHipHopClip.Channels;
-            chans.erase(
-                std::remove_if(chans.begin(), chans.end(),
-                    [](const LoadedNodeAnimation& ch) { return ch.NodeName == "metarig"; }),
-                chans.end());
-            m_MaleHipHopClipLoaded = true;
-            PURR_INFO("Male emote clip loaded: '{}' channels={} (metarig exclu)",
-                m_MaleHipHopClip.Name, (int)m_MaleHipHopClip.Channels.size());
-        }
-        else {
-            PURR_WARN("Male emote clip missing or invalid: assets/models/roblox/male_player/source/Hip Hop Dancing.fbx");
+            m_MaleEmoteClips[i] = animAsset.Animations.front();
+            SanitizeMaleEmoteClip(m_MaleEmoteClips[i]);
+            m_MaleEmoteClipLoaded[i] = true;
+            PURR_INFO("Male emote [{}] loaded: '{}' channels={}",
+                kMaleEmoteSlotDefs[i].UiLabel, m_MaleEmoteClips[i].Name, (int)m_MaleEmoteClips[i].Channels.size());
         }
     }
 
@@ -963,12 +978,12 @@ public:
         m_SavedCamera.Elevation = m_Camera.GetElevation();
         m_State = EngineState::Playing;
         m_PlayEmoteMenuOpen = false;
-        m_PlayMaleEmoteActive = false;
+        m_PlayMaleEmoteSlotIndex = -1;
         m_PlayMaleEmoteTime = 0.0f;
         m_PlayEmoteDebugTimer = 0.0f;
         s_PlayEmoteLockMovement = false;
         if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male)
-            TryLoadMaleHipHopClip();
+            TryLoadMaleEmoteClips();
         m_GizmoDragging = false;
         m_ActiveAxis = GizmoAxis::None;
 
@@ -1058,7 +1073,7 @@ public:
         m_BazookaCooldownTimer = 0.0f;
         m_PlayBazookaEquipped = false;
         m_PlayEmoteMenuOpen = false;
-        m_PlayMaleEmoteActive = false;
+        m_PlayMaleEmoteSlotIndex = -1;
         m_PlayMaleEmoteTime = 0.0f;
         m_PlayEmoteDebugTimer = 0.0f;
         s_PlayEmoteLockMovement = false;
@@ -1712,8 +1727,10 @@ public:
             auto assetIt = m_AnimatedAssetCache.find(obj.MeshPath);
             if (assetIt != m_AnimatedAssetCache.end()) {
                 const bool isMalePlayer = (obj.Name == "Player" && m_PlayerAvatarChoice == PlayerAvatarChoice::Male);
-                if (isMalePlayer && m_PlayMaleEmoteActive && m_MaleHipHopClipLoaded) {
-                    skinPose = EvaluateAnimationPose(assetIt->second, m_MaleHipHopClip, m_PlayMaleEmoteTime);
+                if (isMalePlayer && m_PlayMaleEmoteSlotIndex >= 0 && m_PlayMaleEmoteSlotIndex < kMaleEmoteSlotCount
+                    && m_MaleEmoteClipLoaded[m_PlayMaleEmoteSlotIndex]) {
+                    skinPose = EvaluateAnimationPose(
+                        assetIt->second, m_MaleEmoteClips[m_PlayMaleEmoteSlotIndex], m_PlayMaleEmoteTime);
                     hasSkinPose = true;
                 }
                 else if (!assetIt->second.Animations.empty()) {
@@ -2180,12 +2197,13 @@ public:
         if (m_State == EngineState::Playing)
         {
             m_BazookaCooldownTimer = glm::max(0.0f, m_BazookaCooldownTimer - dt);
-            if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayMaleEmoteActive)
+            if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayMaleEmoteSlotIndex >= 0)
                 m_PlayMaleEmoteTime += dt;
-            s_PlayEmoteLockMovement = (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayMaleEmoteActive);
+            s_PlayEmoteLockMovement = (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayMaleEmoteSlotIndex >= 0);
             if (!io.WantTextInput && m_PlayerAvatarChoice == PlayerAvatarChoice::Male && ImGui::IsKeyPressed(ImGuiKey_E))
                 m_PlayEmoteMenuOpen = !m_PlayEmoteMenuOpen;
-            if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayMaleEmoteActive) {
+            if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayMaleEmoteSlotIndex >= 0
+                && m_PlayMaleEmoteSlotIndex < kMaleEmoteSlotCount) {
                 m_PlayEmoteDebugTimer -= dt;
                 if (m_PlayEmoteDebugTimer <= 0.0f) {
                     m_PlayEmoteDebugTimer = 1.0f;
@@ -2195,13 +2213,14 @@ public:
                         auto assetItDbg = m_AnimatedAssetCache.find(meshPath);
                         if (assetItDbg != m_AnimatedAssetCache.end()) {
                             const auto& asset = assetItDbg->second;
+                            const LoadedAnimationClip& dbgClip = m_MaleEmoteClips[m_PlayMaleEmoteSlotIndex];
                             int matchedChannels = 0;
-                            for (const auto& ch : m_MaleHipHopClip.Channels) {
+                            for (const auto& ch : dbgClip.Channels) {
                                 for (const auto& n : asset.Nodes) {
                                     if (n.Name == ch.NodeName) { matchedChannels++; break; }
                                 }
                             }
-                            AnimationPoseResult poseDbg = EvaluateAnimationPose(asset, m_MaleHipHopClip, m_PlayMaleEmoteTime);
+                            AnimationPoseResult poseDbg = EvaluateAnimationPose(asset, dbgClip, m_PlayMaleEmoteTime);
                             int matchedBones = 0;
                             int meshesWithAnimNode = 0;
                             std::string firstAnimNodeName;
@@ -2218,10 +2237,12 @@ public:
                                     }
                                 }
                             }
-                            PURR_INFO("Emote dbg: t={:.2f} clip='{}' channels={} matchedChannels={} nodes={} meshes={} meshesWithAnimNode={} firstAnimNode='{}' bones(firstMesh)={} matchedBones={} finalMats={}",
+                            PURR_INFO("Emote dbg: t={:.2f} slot={} label='{}' clip='{}' channels={} matchedChannels={} nodes={} meshes={} meshesWithAnimNode={} firstAnimNode='{}' bones(firstMesh)={} matchedBones={} finalMats={}",
                                 m_PlayMaleEmoteTime,
-                                m_MaleHipHopClip.Name,
-                                (int)m_MaleHipHopClip.Channels.size(),
+                                m_PlayMaleEmoteSlotIndex,
+                                kMaleEmoteSlotDefs[m_PlayMaleEmoteSlotIndex].UiLabel,
+                                dbgClip.Name,
+                                (int)dbgClip.Channels.size(),
                                 matchedChannels,
                                 (int)asset.Nodes.size(),
                                 (int)asset.Meshes.size(),
@@ -2335,8 +2356,10 @@ public:
             auto assetIt = m_AnimatedAssetCache.find(obj.MeshPath);
             if (assetIt != m_AnimatedAssetCache.end()) {
                 const bool isMalePlayer = (obj.Name == "Player" && m_PlayerAvatarChoice == PlayerAvatarChoice::Male);
-                if (isMalePlayer && m_PlayMaleEmoteActive && m_MaleHipHopClipLoaded) {
-                    skinPose = EvaluateAnimationPose(assetIt->second, m_MaleHipHopClip, m_PlayMaleEmoteTime);
+                if (isMalePlayer && m_PlayMaleEmoteSlotIndex >= 0 && m_PlayMaleEmoteSlotIndex < kMaleEmoteSlotCount
+                    && m_MaleEmoteClipLoaded[m_PlayMaleEmoteSlotIndex]) {
+                    skinPose = EvaluateAnimationPose(
+                        assetIt->second, m_MaleEmoteClips[m_PlayMaleEmoteSlotIndex], m_PlayMaleEmoteTime);
                     hasSkinPose = true;
                 }
                 else if (!assetIt->second.Animations.empty()) {
@@ -2803,8 +2826,8 @@ public:
 
             // Menu emote (E) - male uniquement.
             if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayEmoteMenuOpen) {
-                const float menuW = 340.0f;
-                const float menuH = 120.0f;
+                const float menuW = 360.0f;
+                const float menuH = 128.0f;
                 const float menuX = m_ViewportPos.x + (m_ViewportSize.x - menuW) * 0.5f;
                 const float menuY = m_ViewportPos.y + m_ViewportSize.y - menuH - 78.0f;
                 ImGui::SetCursorScreenPos(ImVec2(menuX, menuY));
@@ -2814,24 +2837,36 @@ public:
                 ImGui::BeginChild("##emote_menu_male", ImVec2(menuW, menuH), true);
                 ImGui::Text("Emotes (Male) - [E] ouvrir/fermer");
                 ImGui::Separator();
-                if (ImGui::Button(m_PlayMaleEmoteActive ? "Hip Hop Dancing [ON]" : "Hip Hop Dancing", ImVec2(150.0f, 34.0f))) {
-                    if (m_MaleHipHopClipLoaded) {
-                        m_PlayMaleEmoteActive = !m_PlayMaleEmoteActive;
-                        if (m_PlayMaleEmoteActive) {
-                            m_PlayMaleEmoteTime = 0.0f;
-                            m_PlayEmoteDebugTimer = 0.0f;
+                for (int si = 0; si < kMaleEmoteSlotCount; ++si) {
+                    if (si > 0)
+                        ImGui::SameLine();
+                    if (!m_MaleEmoteClipLoaded[si])
+                        ImGui::BeginDisabled();
+                    const bool on = (m_PlayMaleEmoteSlotIndex == si);
+                    std::string btn = kMaleEmoteSlotDefs[si].UiLabel;
+                    if (on)
+                        btn += " [ON]";
+                    btn += "##emote_slot_";
+                    btn += std::to_string(si);
+                    if (ImGui::Button(btn.c_str(), ImVec2(108.0f, 34.0f))) {
+                        if (m_MaleEmoteClipLoaded[si]) {
+                            if (on)
+                                m_PlayMaleEmoteSlotIndex = -1;
+                            else {
+                                m_PlayMaleEmoteSlotIndex = si;
+                                m_PlayMaleEmoteTime = 0.0f;
+                                m_PlayEmoteDebugTimer = 0.0f;
+                            }
+                            PURR_INFO("Emote toggle: slot={} activeSlot={}", si, m_PlayMaleEmoteSlotIndex);
                         }
-                        PURR_INFO("Emote toggle: hiphop active={} clipLoaded={}", m_PlayMaleEmoteActive ? 1 : 0, m_MaleHipHopClipLoaded ? 1 : 0);
                     }
+                    if (!m_MaleEmoteClipLoaded[si])
+                        ImGui::EndDisabled();
                 }
-                ImGui::SameLine();
-                ImGui::BeginDisabled();
-                ImGui::Button("Slot vide##emote_empty_1", ImVec2(80.0f, 34.0f));
-                ImGui::SameLine();
-                ImGui::Button("Slot vide##emote_empty_2", ImVec2(80.0f, 34.0f));
-                ImGui::EndDisabled();
-                if (!m_MaleHipHopClipLoaded)
-                    ImGui::TextDisabled("Clip introuvable: Hip Hop Dancing.fbx");
+                for (int si = 0; si < kMaleEmoteSlotCount; ++si) {
+                    if (!m_MaleEmoteClipLoaded[si])
+                        ImGui::TextDisabled("Introuvable: %s", kMaleEmoteSlotDefs[si].RelPath);
+                }
                 ImGui::EndChild();
                 ImGui::PopStyleColor(2);
                 ImGui::PopStyleVar();
@@ -4881,11 +4916,11 @@ private:
     float                         m_BazookaCooldownTimer = 0.0f;
     bool                          m_PlayBazookaEquipped = false;
     bool                          m_PlayEmoteMenuOpen = false;
-    bool                          m_PlayMaleEmoteActive = false;
-    bool                          m_MaleHipHopClipLoaded = false;
+    int                           m_PlayMaleEmoteSlotIndex = -1;
+    bool                          m_MaleEmoteClipLoaded[kMaleEmoteSlotCount]{};
     float                         m_PlayMaleEmoteTime = 0.0f;
     float                         m_PlayEmoteDebugTimer = 0.0f;
-    LoadedAnimationClip           m_MaleHipHopClip;
+    LoadedAnimationClip           m_MaleEmoteClips[kMaleEmoteSlotCount];
     float                         m_ProjectileSpeed = 15.0f;
     float                         m_ProjectileLifetime = 2.0f;
     float                         m_ProjectileGravity = -1.2f;
