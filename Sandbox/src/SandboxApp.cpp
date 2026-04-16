@@ -243,16 +243,18 @@ public:
 
     void OnUpdate(float dt) override
     {
-        ImGuiIO& io = ImGui::GetIO();
         glm::vec3 move = { 0,0,0 };
         float az = glm::radians(s_PlayCameraAzimuthDeg);
         glm::vec3 forward = glm::normalize(glm::vec3(-cosf(az), 0.0f, -sinf(az)));
         glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0, 1, 0)));
+        auto isMoveKeyDown = [](ImGuiKey imguiKey, int purrKey) {
+            return ImGui::IsKeyDown(imguiKey) || Purr::Input::IsKeyPressed(purrKey);
+            };
 
-        if (ImGui::IsKeyDown(ImGuiKey_W)) move += forward;
-        if (ImGui::IsKeyDown(ImGuiKey_S)) move -= forward;
-        if (ImGui::IsKeyDown(ImGuiKey_A)) move -= right;
-        if (ImGui::IsKeyDown(ImGuiKey_D)) move += right;
+        if (isMoveKeyDown(ImGuiKey_W, PURR_KEY_W)) move += forward;
+        if (isMoveKeyDown(ImGuiKey_S, PURR_KEY_S)) move -= forward;
+        if (isMoveKeyDown(ImGuiKey_A, PURR_KEY_A)) move -= right;
+        if (isMoveKeyDown(ImGuiKey_D, PURR_KEY_D)) move += right;
 
         bool moving = glm::length(move) > 0.0f;
 
@@ -958,11 +960,12 @@ public:
         s_PlayCameraFirstPerson = IsPlayFirstPerson();
         UpdatePlayCamera(m_Objects[playerIdx], 0.016f);
 
-        // Attacher le script de mouvement
+        SpawnBazookaForPlayer(playerIdx);
+        // Important: le push du bazooka peut reallouer m_Objects.
+        // On attache donc le script APRES pour ne pas le perdre (copy ctor => Script=nullptr).
         m_Objects[playerIdx].Script = std::make_unique<CatScript>();
         m_Objects[playerIdx].Script->Owner = &m_Objects[playerIdx];
         m_Objects[playerIdx].Script->OnStart();
-        SpawnBazookaForPlayer(playerIdx);
         m_Projectiles.clear();
         m_BazookaCooldownTimer = 0.0f;
 
@@ -1231,8 +1234,16 @@ public:
             if (flatLenSq > 1e-8f)
                 flatFwd = glm::normalize(flatFwd);
 
-            float eyeY = glm::max(0.18f, m_PlayFPEyeHeightScale * player.Scale.y);
-            glm::vec3 eye = base + glm::vec3(0.0f, eyeY, 0.0f) + flatFwd * (m_PlayFPEyeForwardScale * player.Scale.y);
+            // Parametres de camera differents selon l'avatar (male/female).
+            const bool isMaleAvatar = (m_PlayerAvatarChoice == PlayerAvatarChoice::Male);
+            float eyeHeightScale = isMaleAvatar ? m_PlayFPEyeHeightScaleMale : m_PlayFPEyeHeightScaleFemale;
+            float forwardScale = isMaleAvatar ? m_PlayFPEyeForwardScaleMale : m_PlayFPEyeForwardScaleFemale;
+            float eyeHeightBase = isMaleAvatar ? m_PlayFPEyeHeightBaseMale : m_PlayFPEyeHeightBaseFemale;
+            float forwardBase = isMaleAvatar ? m_PlayFPEyeForwardBaseMale : m_PlayFPEyeForwardBaseFemale;
+
+            // Important: pas de min fixe a 0.18, sinon le male reste "coince" a la meme hauteur visuelle.
+            float eyeY = eyeHeightBase + eyeHeightScale * player.Scale.y;
+            glm::vec3 eye = base + glm::vec3(0.0f, eyeY, 0.0f) + flatFwd * (forwardBase + forwardScale * player.Scale.y);
 
             const float R = m_PlayFPSphereRadius;
             glm::vec3 target = eye + fwd * R;
@@ -2476,10 +2487,11 @@ public:
             dl->AddCircleFilled(center, 1.8f, fill);
         }
 
-        // ---- Toolbar gizmo (haut-gauche) — masquée en Play mode ----
+        // ---- Toolbar gizmo (gauche, sous la barre des vues) — masquee en Play mode ----
         if (m_State == EngineState::Editor)
         {
-            ImGui::SetCursorScreenPos(ImVec2(contentPos.x + 8, contentPos.y + 8));
+            // Evite les clics accidentels sur Hand pres des controles "1 vue / 2 vues / 4 vues".
+            ImGui::SetCursorScreenPos(ImVec2(contentPos.x + 8, contentPos.y + 42));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
 
             ImGui::PushStyleColor(ImGuiCol_Button,
@@ -2883,6 +2895,16 @@ public:
             ImGui::DragFloat("Elevation", &m_PlayCamElevation, 0.5f, -45.0f, 80.0f);
             ImGui::DragFloat("Target Height", &m_PlayCamTargetHeight, 0.02f, 0.0f, 4.0f);
             ImGui::DragFloat("Follow Speed", &m_PlayCamFollowSpeed, 0.1f, 1.0f, 30.0f);
+            ImGui::Separator();
+            ImGui::Text("Play camera 1P (avatar)");
+            ImGui::DragFloat("Female eye base", &m_PlayFPEyeHeightBaseFemale, 0.01f, 0.0f, 3.0f);
+            ImGui::DragFloat("Female eye scale", &m_PlayFPEyeHeightScaleFemale, 0.01f, 0.0f, 3.0f);
+            ImGui::DragFloat("Female forward base", &m_PlayFPEyeForwardBaseFemale, 0.01f, -2.0f, 2.0f);
+            ImGui::DragFloat("Female forward scale", &m_PlayFPEyeForwardScaleFemale, 0.01f, -2.0f, 2.0f);
+            ImGui::DragFloat("Male eye base", &m_PlayFPEyeHeightBaseMale, 0.01f, 0.0f, 3.0f);
+            ImGui::DragFloat("Male eye scale", &m_PlayFPEyeHeightScaleMale, 0.01f, 0.0f, 3.0f);
+            ImGui::DragFloat("Male forward base", &m_PlayFPEyeForwardBaseMale, 0.01f, -2.0f, 2.0f);
+            ImGui::DragFloat("Male forward scale", &m_PlayFPEyeForwardScaleMale, 0.01f, -2.0f, 2.0f);
             ImGui::Separator();
             ImGui::Text("Collision");
             ImGui::TextDisabled("Les maps .obj n'ont pas de collision auto : ajoute des Cube/Plan.");
@@ -4389,8 +4411,15 @@ private:
     float                         m_PlayFPPitchMaxDeg = 88.0f;
     float                         m_PlayFPMouseSens = 0.11f;
     float                         m_PlayFPSphereRadius = 1.0f;
-    float                         m_PlayFPEyeHeightScale = 0.68f;
-    float                         m_PlayFPEyeForwardScale = 0.07f;
+    // Reglages 1ere personne selon avatar
+    float                         m_PlayFPEyeHeightBaseFemale = 0.00f;
+    float                         m_PlayFPEyeHeightScaleFemale = 0.68f;
+    float                         m_PlayFPEyeForwardBaseFemale = 0.00f;
+    float                         m_PlayFPEyeForwardScaleFemale = 0.35f;
+    float                         m_PlayFPEyeHeightBaseMale = 0.42f;
+    float                         m_PlayFPEyeHeightScaleMale = 1.15f;
+    float                         m_PlayFPEyeForwardBaseMale = 0.04f;
+    float                         m_PlayFPEyeForwardScaleMale = 0.45f;
     bool                          m_PlayCameraPrevFirstPerson = false;
     float                         m_PlayerBridgeTime = 0.0f;
     PlayerAnimState               m_PlayerAnimState = PlayerAnimState::Idle;
