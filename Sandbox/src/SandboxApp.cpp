@@ -317,10 +317,10 @@ private:
     float m_Time = 0.0f;
 };
 // -----------------------------------------------------------------------
-// Gizmo enums
-// -----------------------------------------------------------------------
-enum class GizmoAxis { None, X, Y, Z, All };
-enum class GizmoMode { Translate, Rotate, Scale };
+    // Gizmo enums
+    // -----------------------------------------------------------------------
+    enum class GizmoAxis { None, X, Y, Z, All };
+    enum class GizmoMode { Hand, Translate, Rotate, Scale };
 enum class PlayerAvatarChoice { Male = 0, Female };
 
 // -----------------------------------------------------------------------
@@ -384,11 +384,9 @@ public:
         plane.Tex = m_CheckerTex;
         m_Objects.push_back(plane);
 
-
-
-        // inititialisation de la selection 
-        m_Selected = 0;
-        m_Selection.insert(0);
+        // Pas de selection initiale -> pas de gizmo au demarrage.
+        m_Selected = -1;
+        m_Selection.clear();
 
         m_Lights[0].Position = { 3.0f, 3.0f,  3.0f }; m_Lights[0].Color = { 1.0f,1.0f,1.0f };
         m_Lights[1].Position = { -3.0f, 2.0f,  2.0f }; m_Lights[1].Color = { 1.0f,0.4f,0.4f };
@@ -582,10 +580,6 @@ public:
         if (m_Selected == -1) {
             if (!m_Selection.empty())
                 m_Selected = *m_Selection.begin();
-            else if (!m_Objects.empty()) {
-                m_Selected = 0;
-                m_Selection.insert(0);
-            }
         }
         else if (!m_Selection.count(m_Selected)) {
             m_Selection.insert(m_Selected);
@@ -924,7 +918,10 @@ public:
         player.MeshPath = GetSelectedPlayerMeshPath();
         PURR_INFO("Play avatar: {}", player.MeshPath);
         player.Position = (hasSpawnMarker ? markerSpawnPos : m_CurrentMapSpawn) + GetAvatarSpawnOffset();
-        player.Scale = glm::max(m_CurrentPlayerScale * GetAvatarScaleMultiplier(), glm::vec3(0.01f));
+        if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male)
+            player.Scale = glm::vec3(0.091f, 0.091f, 0.091f);
+        else
+            player.Scale = glm::max(m_CurrentPlayerScale * GetAvatarScaleMultiplier(), glm::vec3(0.01f));
         player.Mat.Diffuse = { 1.0f, 1.0f, 1.0f };  // blanc = texture pure
         player.Mat.Specular = { 0.3f, 0.3f, 0.3f };
         player.Mat.Shininess = 32.0f;
@@ -995,8 +992,7 @@ public:
         m_Projectiles.clear();
         m_BazookaCooldownTimer = 0.0f;
         m_Selection.clear();
-        m_Selected = m_Objects.empty() ? -1 : 0;
-        if (m_Selected >= 0) m_Selection.insert(m_Selected);
+        m_Selected = -1;
 
     }
 
@@ -1731,8 +1727,7 @@ public:
 
         m_Objects.swap(kept);
         m_Selection.clear();
-        m_Selected = m_Objects.empty() ? -1 : 0;
-        if (m_Selected >= 0) m_Selection.insert(m_Selected);
+        m_Selected = -1;
     }
 
 
@@ -1787,6 +1782,7 @@ public:
             {
                 if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) Undo();
                 if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y)) Redo();
+                if (ImGui::IsKeyPressed(ImGuiKey_H)) m_GizmoMode = GizmoMode::Hand;
                 if (ImGui::IsKeyPressed(ImGuiKey_T)) m_GizmoMode = GizmoMode::Translate;
                 if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoMode = GizmoMode::Rotate;
                 if (ImGui::IsKeyPressed(ImGuiKey_S)) m_GizmoMode = GizmoMode::Scale;
@@ -1839,12 +1835,13 @@ public:
                 }
             }
 
-            // Orbite (clic droit, seulement si pas en train de dragger le gizmo)
+            // Orbite (clic droit)
             if (m_ViewportHovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
                 m_Camera.Orbit(io.MouseDelta.x * 0.4f, -io.MouseDelta.y * 0.4f);
 
             // --- Gizmo input (ImGui direct, plus fiable que le systeme d'events) ---
-            if (m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_Selected >= 0 && !m_GizmoDragging)
+            if (m_GizmoMode != GizmoMode::Hand &&
+                m_ViewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && m_Selected >= 0 && !m_GizmoDragging)
             {
                 ImGuiIO& io = ImGui::GetIO();
                 glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
@@ -1971,7 +1968,8 @@ public:
             }
 
             // Hover highlight
-            if (!m_GizmoDragging && m_ViewportHovered && m_Selected >= 0)
+            if (m_GizmoMode != GizmoMode::Hand &&
+                !m_GizmoDragging && m_ViewportHovered && m_Selected >= 0)
             {
                 ImGuiIO& io = ImGui::GetIO();
                 glm::vec2 mp = { io.MousePos.x - m_ViewportPos.x, io.MousePos.y - m_ViewportPos.y };
@@ -2483,18 +2481,27 @@ public:
         {
             ImGui::SetCursorScreenPos(ImVec2(contentPos.x + 8, contentPos.y + 8));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                m_GizmoMode == GizmoMode::Hand ? ImVec4(0.9f, 0.8f, 0.2f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
+            if (ImGui::Button("  Hand [H]  ")) m_GizmoMode = GizmoMode::Hand;
+            ImGui::PopStyleColor(); ImGui::SameLine(0, 4);
+
             ImGui::PushStyleColor(ImGuiCol_Button,
                 m_GizmoMode == GizmoMode::Translate ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
             if (ImGui::Button("  Translate [T]  ")) m_GizmoMode = GizmoMode::Translate;
             ImGui::PopStyleColor(); ImGui::SameLine(0, 4);
+
             ImGui::PushStyleColor(ImGuiCol_Button,
                 m_GizmoMode == GizmoMode::Rotate ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
             if (ImGui::Button("  Rotation [R]  ")) m_GizmoMode = GizmoMode::Rotate;
             ImGui::PopStyleColor(); ImGui::SameLine(0, 4);
+
             ImGui::PushStyleColor(ImGuiCol_Button,
                 m_GizmoMode == GizmoMode::Scale ? ImVec4(0.9f, 0.4f, 0.7f, 0.9f) : ImVec4(0.25f, 0.25f, 0.25f, 0.85f));
             if (ImGui::Button("  Scale [S]  ")) m_GizmoMode = GizmoMode::Scale;
             ImGui::PopStyleColor();
+
             ImGui::PopStyleVar();
         }
 
@@ -3687,6 +3694,8 @@ private:
     // -----------------------------------------------------------------------
     GizmoAxis HitTestGizmo(glm::vec2 mouseNDC)
     {
+        if (m_GizmoMode == GizmoMode::Hand)
+            return GizmoAxis::None;
         if (m_GizmoMode == GizmoMode::Translate)
             return HitTestTranslateGizmo(mouseNDC);
         else if (m_GizmoMode == GizmoMode::Rotate)
@@ -4316,7 +4325,7 @@ private:
     std::shared_ptr<Purr::VertexArray>  m_RingVA;
     std::shared_ptr<Purr::VertexArray>  m_ScaleHandleVA;
     std::shared_ptr<Purr::Shader>       m_GizmoShader;
-    GizmoMode m_GizmoMode = GizmoMode::Translate;
+    GizmoMode m_GizmoMode = GizmoMode::Hand;
     GizmoAxis m_ActiveAxis = GizmoAxis::None;
     GizmoAxis m_HoveredAxis = GizmoAxis::None;
     bool      m_GizmoDragging = false;
@@ -4346,7 +4355,7 @@ private:
     PlayerAvatarChoice                                                  m_PlayerAvatarChoice = PlayerAvatarChoice::Male;
     std::string                                                         m_PlayerMaleMeshPath = "assets/models/roblox/male_player/source/12.fbx";
     std::string                                                         m_PlayerFemaleMeshPath = "assets/models/roblox/female_player/baconHair1Tex.obj";
-    glm::vec3                                                           m_MaleAvatarScaleMultiplier = { 0.55f, 0.55f, 0.55f };
+    glm::vec3                                                           m_MaleAvatarScaleMultiplier = { 0.091f, 0.091f, 0.091f };
     glm::vec3                                                           m_MaleAvatarSpawnOffset = { 0.0f, 0.0f, 0.0f };
     glm::vec3                                                           m_FemaleAvatarScaleMultiplier = { 1.0f, 1.0f, 1.0f };
     glm::vec3                                                           m_FemaleAvatarSpawnOffset = { 0.0f, 0.0f, 0.0f };
