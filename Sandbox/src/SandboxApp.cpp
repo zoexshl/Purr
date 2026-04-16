@@ -10,12 +10,26 @@
 #include <commdlg.h>
 #include "nlohmann/json.hpp"
 #include "Purr/ObjLoader.h"
+#include "Purr/AssimpLoader.h"
 #include "Purr/Renderer/TextureManager.h"
 #include <algorithm>
+#include <filesystem>
+#include <cwctype>
+#include <limits>
 #define GLM_ENABLE_EXPERIMENTAL //ajouté apres avoir etre engeulé par compilateur . 
 #include <glm/gtx/matrix_decompose.hpp> // cas gerer parentng
 
 using json = nlohmann::json;
+
+static std::string PathToUtf8(const std::filesystem::path& p)
+{
+#if defined(__cpp_char8_t)
+    std::u8string u8 = p.u8string();
+    return std::string(u8.begin(), u8.end());
+#else
+    return p.u8string();
+#endif
+}
 
 // -----------------------------------------------------------------------
 // File dialog
@@ -33,6 +47,7 @@ static std::string OpenFileDialog(const char* filter = "All Files\0*.*\0")
     if (GetOpenFileNameA(&ofn)) return std::string(filename);
     return "";
 }
+
 // -----------------------------------------------------------------------
 // Structs
 // -----------------------------------------------------------------------
@@ -190,9 +205,18 @@ struct SceneObject {
 
 
     glm::mat4 GetWorldTransform(const std::vector<SceneObject>& objs) const {
-        if (ParentIndex >= 0 && ParentIndex < (int)objs.size())
-            return objs[ParentIndex].GetWorldTransform(objs) * GetTransform();
-        return GetTransform();
+        glm::mat4 world(1.0f);
+        world = GetTransform();
+
+        int cur = ParentIndex;
+        int guard = 0;
+        const int maxDepth = (int)objs.size() + 1;
+        while (cur >= 0 && cur < (int)objs.size() && guard < maxDepth) {
+            world = objs[cur].GetTransform() * world;
+            cur = objs[cur].ParentIndex;
+            ++guard;
+        }
+        return world;
     }
 
     glm::vec3 GetWorldPosition(const std::vector<SceneObject>& objs) const {
@@ -606,6 +630,233 @@ public:
             child.AnimationKeys = { c0, c1, c2 };
         }
         m_Objects.push_back(child);
+    }
+
+    std::shared_ptr<Purr::VertexArray> BuildVertexArrayFromLoadedMesh(const LoadedMesh& lm)
+    {
+        if (lm.Vertices.empty() || lm.Indices.empty())
+            return nullptr;
+
+        std::vector<float> raw;
+        raw.reserve(lm.Vertices.size() * 8);
+        for (const auto& v : lm.Vertices) {
+            raw.push_back(v.Position.x); raw.push_back(v.Position.y); raw.push_back(v.Position.z);
+            raw.push_back(v.Normal.x);   raw.push_back(v.Normal.y);   raw.push_back(v.Normal.z);
+            raw.push_back(v.TexCoords.x); raw.push_back(v.TexCoords.y);
+        }
+
+        auto va = std::make_shared<Purr::VertexArray>();
+        auto vb = std::make_shared<Purr::VertexBuffer>(raw.data(), (uint32_t)(raw.size() * sizeof(float)));
+        vb->SetLayout({
+            { Purr::ShaderDataType::Float3, "a_Position" },
+            { Purr::ShaderDataType::Float3, "a_Normal"   },
+            { Purr::ShaderDataType::Float2, "a_TexCoord" }
+            });
+        va->AddVertexBuffer(vb);
+        // IndexBuffer prend un pointeur non-const, on copie depuis le mesh source const.
+        std::vector<uint32_t> indices = lm.Indices;
+        va->SetIndexBuffer(std::make_shared<Purr::IndexBuffer>(indices.data(), (uint32_t)indices.size()));
+        return va;
+    }
+
+    std::string ResolveImportedTexturePath(const std::string& modelPath, const std::string& texPath)
+    {
+        try {
+            if (texPath.empty()) return "";
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            fs::path p(texPath);
+            if (p.is_absolute()) {
+                if (fs::exists(p, ec) && !ec)
+                    return PathToUtf8(p);
+                // Chemin absolu invalide (souvent exporte depuis une autre machine):
+                // on conserve le nom de fichier pour tenter une resolution locale.
+                p = p.filename();
+            }
+            fs::path base(modelPath);
+            fs::path candidate = base.parent_path() / p;
+            ec.clear();
+            if (fs::exists(candidate, ec) && !ec)
+                return PathToUtf8(candidate);
+
+            // Fallback: certains packs separent "source" et "textures".
+            const fs::path fileOnly = p.filename();
+            fs::path modelDir = base.parent_path();
+            fs::path cursor = modelDir;
+            for (int i = 0; i < 5 && !cursor.empty(); ++i) {
+                fs::path texDir = cursor / "textures";
+                ec.clear();
+                if (fs::exists(texDir, ec) && !ec && fs::is_directory(texDir, ec)) {
+                    fs::path texCandidate = texDir / fileOnly;
+                    ec.clear();
+                    if (fs::exists(texCandidate, ec) && !ec)
+                        return PathToUtf8(texCandidate);
+                }
+                texDir = cursor / "texture";
+                ec.clear();
+                if (fs::exists(texDir, ec) && !ec && fs::is_directory(texDir, ec)) {
+                    fs::path texCandidate = texDir / fileOnly;
+                    ec.clear();
+                    if (fs::exists(texCandidate, ec) && !ec)
+                        return PathToUtf8(texCandidate);
+                }
+                cursor = cursor.parent_path();
+            }
+        }
+        catch (const std::exception& e) {
+            PURR_WARN("ResolveImportedTexturePath exception: {}", e.what());
+            return "";
+        }
+        return "";
+    }
+
+    std::string GuessDiffuseTextureNearModel(const std::string& modelPath)
+    {
+        namespace fs = std::filesystem;
+        fs::path model(modelPath);
+        fs::path dir = model.parent_path();
+        if (!fs::exists(dir) || !fs::is_directory(dir))
+            return "";
+
+        auto isTextureExtW = [](const std::wstring& ext) {
+            return ext == L".png" || ext == L".jpg" || ext == L".jpeg" || ext == L".tga" || ext == L".bmp";
+            };
+        auto lowerW = [](std::wstring s) {
+            std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c) { return (wchar_t)towlower(c); });
+            return s;
+            };
+
+        auto scanDirForDiffuse = [&](const fs::path& scanDir, fs::path& best, uintmax_t& bestSize) {
+            std::error_code ec;
+            if (!fs::exists(scanDir, ec) || ec || !fs::is_directory(scanDir, ec))
+                return;
+            for (const auto& e : fs::directory_iterator(scanDir, ec)) {
+                if (ec) break;
+                if (!e.is_regular_file()) continue;
+                std::wstring ext = lowerW(e.path().extension().wstring());
+                if (!isTextureExtW(ext)) continue;
+                std::wstring name = lowerW(e.path().filename().wstring());
+                // Priorite aux maps diffuse/basecolor.
+                if (name.find(L"_diff") == std::wstring::npos &&
+                    name.find(L"diffuse") == std::wstring::npos &&
+                    name.find(L"albedo") == std::wstring::npos &&
+                    name.find(L"basecolor") == std::wstring::npos)
+                    continue;
+                uintmax_t sz = 0;
+                ec.clear();
+                sz = fs::file_size(e.path(), ec);
+                if (!ec && sz >= bestSize) {
+                    bestSize = sz;
+                    best = e.path();
+                }
+            }
+            };
+
+        fs::path best;
+        uintmax_t bestSize = 0;
+        fs::path cursor = dir;
+        for (int depth = 0; depth < 5; ++depth) {
+            scanDirForDiffuse(cursor, best, bestSize);
+            scanDirForDiffuse(cursor / "textures", best, bestSize);
+            scanDirForDiffuse(cursor / "texture", best, bestSize);
+            if (!best.empty())
+                break;
+            fs::path parent = cursor.parent_path();
+            if (parent == cursor || parent.empty())
+                break;
+            cursor = parent;
+        }
+
+        try {
+            return best.empty() ? "" : PathToUtf8(best);
+        }
+        catch (const std::exception& e) {
+            PURR_WARN("GuessDiffuseTextureNearModel exception: {}", e.what());
+            return "";
+        }
+    }
+
+    void ImportFBXGrouped(const std::string& path)
+    {
+        auto meshes = LoadMeshFile(path);
+        if (meshes.empty())
+            return;
+
+        SaveSnapshot();
+        std::string filename = path.substr(path.find_last_of("/\\") + 1);
+        std::string stem = filename.substr(0, filename.find_last_of('.'));
+
+        glm::vec3 bmin(std::numeric_limits<float>::max());
+        glm::vec3 bmax(std::numeric_limits<float>::lowest());
+        bool hasBounds = false;
+        for (const auto& lm : meshes) {
+            for (const auto& v : lm.Vertices) {
+                bmin = glm::min(bmin, v.Position);
+                bmax = glm::max(bmax, v.Position);
+                hasBounds = true;
+            }
+        }
+        glm::vec3 center(0.0f);
+        float importScale = 1.0f;
+        if (hasBounds) {
+            center = (bmin + bmax) * 0.5f;
+            glm::vec3 ext = bmax - bmin;
+            float maxDim = glm::max(ext.x, glm::max(ext.y, ext.z));
+            constexpr float kTargetMaxDim = 4.0f;
+            if (maxDim > kTargetMaxDim && maxDim > 1e-4f)
+                importScale = kTargetMaxDim / maxDim; // downscale only
+            PURR_INFO("FBX import: bounds min=({}, {}, {}), max=({}, {}, {}), autoScale={}",
+                bmin.x, bmin.y, bmin.z, bmax.x, bmax.y, bmax.z, importScale);
+        }
+
+        SceneObject folder;
+        folder.Name = stem;
+        folder.Type = PrimitiveType::Folder;
+        folder.Scale = glm::vec3(importScale);
+        folder.Position = hasBounds ? (-center * importScale) : glm::vec3(0.0f);
+        m_Objects.push_back(folder);
+        int folderIdx = (int)m_Objects.size() - 1;
+        const std::string fallbackDiffuse = GuessDiffuseTextureNearModel(path);
+        if (!fallbackDiffuse.empty())
+            PURR_INFO("FBX import: diffuse candidate detectee (fallback desactive par defaut): {}", fallbackDiffuse);
+
+        for (size_t i = 0; i < meshes.size(); ++i) {
+            SceneObject obj;
+            obj.Type = PrimitiveType::Custom;
+            obj.ParentIndex = folderIdx;
+            obj.MeshPath = path;
+            obj.Position = { 0,0,0 };
+            obj.Scale = { 1,1,1 };
+            obj.Mat.Diffuse = { 1.0f,1.0f,1.0f };
+            obj.Mat.Model = IlluminationModel::Phong;
+            obj.Opacity = 1.0f;
+            obj.Name = stem + " Part " + std::to_string((int)i + 1);
+
+            SceneObject::RenderPart part;
+            part.Mesh = BuildVertexArrayFromLoadedMesh(meshes[i]);
+            part.DiffuseTint = glm::vec3(1.0f);
+            std::string resolvedTex = ResolveImportedTexturePath(path, meshes[i].TexturePath);
+            // Important: ne pas appliquer un fallback global a toutes les parts.
+            // Sinon, on obtient des couleurs incoherentes (textures "aleatoires").
+            // On garde le fallback seulement si le FBX n'a qu'un seul mesh.
+            if (resolvedTex.empty() && meshes.size() == 1)
+                resolvedTex = fallbackDiffuse;
+            part.TexturePath = resolvedTex;
+            if (!resolvedTex.empty())
+                part.Texture = Purr::TextureManager::Load(resolvedTex);
+            if (part.Texture)
+                PURR_INFO("FBX import: part {} texture OK: {}", (int)i + 1, resolvedTex);
+            else
+                PURR_WARN("FBX import: part {} sans texture (material path='{}').", (int)i + 1, meshes[i].TexturePath);
+            obj.Parts.push_back(part);
+            if (part.Texture) {
+                obj.Tex = part.Texture;
+                obj.TexPath = part.TexturePath;
+            }
+            m_Objects.push_back(obj);
+        }
+
+        SetPrimarySelected(folderIdx);
     }
 
     bool IsPlayFirstPerson() const { return m_PlayCamDistance <= m_PlayCamFPThreshold; }
@@ -1409,8 +1660,35 @@ public:
         if (m_Selection.empty()) return;
         SaveSnapshot();
         std::vector<int> sorted(m_Selection.begin(), m_Selection.end());
-        std::sort(sorted.rbegin(), sorted.rend());   // erase de la fin
-        for (int idx : sorted) m_Objects.erase(m_Objects.begin() + idx);
+        std::sort(sorted.begin(), sorted.end());
+
+        std::vector<int> oldToNew(m_Objects.size(), -1);
+        int write = 0;
+        size_t delPos = 0;
+        for (int i = 0; i < (int)m_Objects.size(); ++i) {
+            if (delPos < sorted.size() && sorted[delPos] == i) {
+                ++delPos;
+                continue;
+            }
+            oldToNew[i] = write++;
+        }
+
+        std::vector<SceneObject> kept;
+        kept.reserve(write);
+        for (int i = 0; i < (int)m_Objects.size(); ++i)
+            if (oldToNew[i] != -1)
+                kept.push_back(m_Objects[i]);
+
+        for (auto& o : kept) {
+            if (o.ParentIndex < 0 || o.ParentIndex >= (int)oldToNew.size()) {
+                o.ParentIndex = -1;
+            }
+            else {
+                o.ParentIndex = oldToNew[o.ParentIndex];
+            }
+        }
+
+        m_Objects.swap(kept);
         m_Selection.clear();
         m_Selected = m_Objects.empty() ? -1 : 0;
         if (m_Selected >= 0) m_Selection.insert(m_Selected);
@@ -1538,7 +1816,7 @@ public:
                     if (m_GizmoMode == GizmoMode::Rotate)
                     {
                         // Enregistre l'angle initial souris/centre pour la rotation
-                        glm::vec3& pos = m_Objects[m_Selected].Position;
+                        glm::vec3 pos = m_Objects[m_Selected].GetWorldPosition(m_Objects);
                         glm::vec4 clip = m_Camera.GetViewProjection() * glm::vec4(pos, 1.0f);
                         glm::vec2 center2D = { clip.x / clip.w, clip.y / clip.w };
                         m_RotDragLastAngle = atan2f(ndc.y - center2D.y, ndc.x - center2D.x);
@@ -1581,7 +1859,7 @@ public:
                 }
                 else if (m_GizmoMode == GizmoMode::Rotate)
                 {
-                    glm::vec3& pos = m_Objects[m_Selected].Position;
+                    glm::vec3 pos = m_Objects[m_Selected].GetWorldPosition(m_Objects);
                     glm::vec4 clip = m_Camera.GetViewProjection() * glm::vec4(pos, 1.0f);
                     glm::vec2 center2D = { clip.x / clip.w, clip.y / clip.w };
 
@@ -1606,7 +1884,7 @@ public:
                                        -io.MouseDelta.y / m_ViewportSize.y * 2.0f };
 
                     glm::vec3& scl = m_Objects[m_Selected].Scale;
-                    glm::vec3& pos = m_Objects[m_Selected].Position;
+                    glm::vec3 pos = m_Objects[m_Selected].GetWorldPosition(m_Objects);
 
                     if (m_ActiveAxis == GizmoAxis::All)
                     {
@@ -2275,9 +2553,27 @@ public:
                 if (m_Objects[i].Name.find("AnimChild Demo") != std::string::npos)
                     toErase.push_back(i);
             }
-            std::sort(toErase.rbegin(), toErase.rend());
-            for (int idx : toErase)
-                m_Objects.erase(m_Objects.begin() + idx);
+            std::sort(toErase.begin(), toErase.end());
+            std::vector<int> oldToNew(m_Objects.size(), -1);
+            int write = 0;
+            size_t delPos = 0;
+            for (int i = 0; i < (int)m_Objects.size(); ++i) {
+                if (delPos < toErase.size() && toErase[delPos] == i) {
+                    ++delPos;
+                    continue;
+                }
+                oldToNew[i] = write++;
+            }
+            std::vector<SceneObject> kept;
+            kept.reserve(write);
+            for (int i = 0; i < (int)m_Objects.size(); ++i)
+                if (oldToNew[i] != -1)
+                    kept.push_back(m_Objects[i]);
+            for (auto& o : kept) {
+                if (o.ParentIndex < 0 || o.ParentIndex >= (int)oldToNew.size()) o.ParentIndex = -1;
+                else o.ParentIndex = oldToNew[o.ParentIndex];
+            }
+            m_Objects.swap(kept);
             m_Selection.clear();
             m_Selected = m_Objects.empty() ? -1 : 0;
             if (m_Selected >= 0) m_Selection.insert(m_Selected);
@@ -2411,16 +2707,14 @@ public:
         //ImGui::SameLine();
         ImGui::Separator();
 
-        // ---- Importer OBJ  ----
+        // ---- Importer OBJ / FBX  ----
         if (ImGui::Button("Importer OBJ")) {
             std::string p = OpenFileDialog("Modeles OBJ\0*.obj\0All Files\0*.*\0");
             if (!p.empty()) {
                 SceneObject obj;
 
-                // Extraire le nom du fichier sans extension
                 std::string filename = p.substr(p.find_last_of("/\\") + 1);
                 std::string stem = filename.substr(0, filename.find_last_of('.'));
-                // Compter les objets avec le même nom de base pour éviter les doublons
                 int count = 0;
                 for (auto& o : m_Objects)
                     if (o.Name.rfind(stem, 0) == 0) count++;
@@ -2439,6 +2733,13 @@ public:
                 SaveSnapshot();
                 m_Objects.push_back(obj);
                 m_Selected = (int)m_Objects.size() - 1;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Importer FBX")) {
+            std::string p = OpenFileDialog("Modeles FBX\0*.fbx\0All Files\0*.*\0");
+            if (!p.empty()) {
+                ImportFBXGrouped(p);
             }
         }
 
@@ -3289,7 +3590,7 @@ private:
         if (m_Selected < 0 || m_Selected >= (int)m_Objects.size())
             return GizmoAxis::None;
 
-        glm::vec3 pos = m_Objects[m_Selected].Position;
+        glm::vec3 pos = m_Objects[m_Selected].GetWorldPosition(m_Objects);
         float scale = m_Camera.GetRadius() * 0.12f;
         glm::mat4 vp = m_Camera.GetViewProjection();
 
@@ -3332,7 +3633,7 @@ private:
         if (m_Selected < 0 || m_Selected >= (int)m_Objects.size())
             return GizmoAxis::None;
 
-        glm::vec3 pos = m_Objects[m_Selected].Position;
+        glm::vec3 pos = m_Objects[m_Selected].GetWorldPosition(m_Objects);
         float scale = m_Camera.GetRadius() * 0.12f;
         glm::mat4 vp = m_Camera.GetViewProjection();
 
@@ -3385,7 +3686,7 @@ private:
         if (m_Selected < 0 || m_Selected >= (int)m_Objects.size())
             return GizmoAxis::None;
 
-        glm::vec3 pos = m_Objects[m_Selected].Position;
+        glm::vec3 pos = m_Objects[m_Selected].GetWorldPosition(m_Objects);
         float scale = m_Camera.GetRadius() * 0.12f;
         glm::mat4 vp = m_Camera.GetViewProjection();
 

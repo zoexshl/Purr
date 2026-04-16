@@ -61,14 +61,14 @@
     <TargetExt>.exe</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LinkIncremental>false</LinkIncremental>
+    <LinkIncremental>true</LinkIncremental>
     <OutDir>$(ProjectDir)..\bin\Release-windows-x86_64\Sandbox\</OutDir>
     <IntDir>$(ProjectDir)..\bin-int\Release-windows-x86_64\Sandbox\</IntDir>
     <TargetName>Sandbox</TargetName>
     <TargetExt>.exe</TargetExt>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
-    <LinkIncremental>false</LinkIncremental>
+    <LinkIncremental>true</LinkIncremental>
     <OutDir>$(ProjectDir)..\bin\Dist-windows-x86_64\Sandbox\</OutDir>
     <IntDir>$(ProjectDir)..\bin-int\Dist-windows-x86_64\Sandbox\</IntDir>
     <TargetName>Sandbox</TargetName>
@@ -94,20 +94,16 @@
     <ProjectReference>
     </ProjectReference>
     <PostBuildEvent>
-      <Command>IF EXIST "$(SolutionDir)Purr\vendor\assimp\bin\Debug\assimp-vc143-mtd.dll"\ (xcopy /Q /E /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Debug\assimp-vc143-mtd.dll" "..\bin\Debug-windows-x86_64\Sandbox" &gt; nul) ELSE (xcopy /Q /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Debug\assimp-vc143-mtd.dll" "..\bin\Debug-windows-x86_64\Sandbox" &gt; nul)</Command>
+      <Command>IF EXIST "$(SolutionDir)Purr\vendor\assimp\bin\Debug\*.dll"\ (xcopy /Q /E /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Debug\*.dll" "..\bin\Debug-windows-x86_64\Sandbox" &gt; nul) ELSE (xcopy /Q /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Debug\*.dll" "..\bin\Debug-windows-x86_64\Sandbox" &gt; nul)</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>PURR_PLATFORM_WINDOWS;PURR_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>PURR_PLATFORM_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\Purr\vendor\spdlog\include;..\Purr\src;..\Purr\vendor;..\Purr\vendor\glm;..\Purr\vendor\assimp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <Optimization>Full</Optimization>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <MinimalRebuild>false</MinimalRebuild>
-      <StringPooling>true</StringPooling>
+      <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
@@ -115,26 +111,20 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <ProjectReference>
     </ProjectReference>
     <PostBuildEvent>
-      <Command>IF EXIST "$(SolutionDir)Purr\vendor\assimp\bin\Release\assimp-vc143-mt.dll"\ (xcopy /Q /E /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Release\assimp-vc143-mt.dll" "..\bin\Release-windows-x86_64\Sandbox" &gt; nul) ELSE (xcopy /Q /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Release\assimp-vc143-mt.dll" "..\bin\Release-windows-x86_64\Sandbox" &gt; nul)</Command>
+      <Command>IF EXIST "$(SolutionDir)Purr\vendor\assimp\bin\Release\*.dll"\ (xcopy /Q /E /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Release\*.dll" "..\bin\Release-windows-x86_64\Sandbox" &gt; nul) ELSE (xcopy /Q /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Release\*.dll" "..\bin\Release-windows-x86_64\Sandbox" &gt; nul)</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Dist|x64'">
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
-      <PreprocessorDefinitions>PURR_PLATFORM_WINDOWS;PURR_DIST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>PURR_PLATFORM_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>..\Purr\vendor\spdlog\include;..\Purr\src;..\Purr\vendor;..\Purr\vendor\glm;..\Purr\vendor\assimp\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <Optimization>Full</Optimization>
-      <FunctionLevelLinking>true</FunctionLevelLinking>
-      <IntrinsicFunctions>true</IntrinsicFunctions>
-      <MinimalRebuild>false</MinimalRebuild>
-      <StringPooling>true</StringPooling>
+      <Optimization>Disabled</Optimization>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <LanguageStandard>stdcpp17</LanguageStandard>
@@ -142,11 +132,12 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <OptimizeReferences>true</OptimizeReferences>
     </Link>
     <ProjectReference>
     </ProjectReference>
+    <PostBuildEvent>
+      <Command>IF EXIST "$(SolutionDir)Purr\vendor\assimp\bin\Release\*.dll"\ (xcopy /Q /E /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Release\*.dll" "..\bin\Dist-windows-x86_64\Sandbox" &gt; nul) ELSE (xcopy /Q /Y /I "$(SolutionDir)Purr\vendor\assimp\bin\Release\*.dll" "..\bin\Dist-windows-x86_64\Sandbox" &gt; nul)</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\SandboxApp.cpp" />

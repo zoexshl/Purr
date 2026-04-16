@@ -175,22 +175,15 @@ project "Sandbox"
 
 
 	filter "configurations:Debug"
-	    postbuildcommands {
-			'{COPY} "%{wks.location}Purr/vendor/assimp/bin/Debug/assimp-vc143-mtd.dll" "%{cfg.targetdir}"'
+		postbuildcommands {
+			'{COPY} "%{wks.location}Purr/vendor/assimp/bin/Debug/*.dll" "%{cfg.targetdir}"'
 		}
 		defines "PURR_DEBUG"
 		runtime "Debug"
 		symbols "On"
 
-	filter "configurations:Release"
-	    postbuildcommands {
-			'{COPY} "%{wks.location}Purr/vendor/assimp/bin/Release/assimp-vc143-mt.dll" "%{cfg.targetdir}"'
+	filter "configurations:Release or Dist"
+		postbuildcommands {
+			'{COPY} "%{wks.location}Purr/vendor/assimp/bin/Release/*.dll" "%{cfg.targetdir}"'
 		}
-		defines "PURR_RELEASE"
-		runtime "Release"
-		optimize "on"
-
-	filter "configurations:Dist"
-		defines "PURR_DIST"
-		runtime "Release"
-		optimize "on"
+	filter ""
