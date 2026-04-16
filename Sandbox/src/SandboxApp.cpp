@@ -140,7 +140,7 @@ static bool  s_PlayCameraFirstPerson = false;
 
 class CatScript : public ScriptComponent {
 public:
-    float Speed = 3.0f;
+    float Speed = 2.0f;
     float BobAmp = 0.00f;   // amplitude du "bounce" vertical | désactivé pour le moment.
     float BobSpeed = 8.0f;
     float RotSpeed = 90.0f;   // degrés/sec pour la rotation
@@ -630,7 +630,10 @@ public:
                     bmax.y = topY;
                 }
 
-                m_PlayStaticColliders.push_back({ bmin, bmax, isFloorPrim });
+                // "Collider invisible" sert souvent de plateforme de gameplay:
+                // on autorise donc l'appui/jump dessus même si la primitive n'est pas classée "floor" par l'aspect ratio.
+                bool hasWalkableTop = isFloorPrim || obj.IsColliderOnly;
+                m_PlayStaticColliders.push_back({ bmin, bmax, hasWalkableTop });
             }
         }
 
@@ -1118,6 +1121,12 @@ public:
         // Scripts — seulement en Play mode
         if (m_State == EngineState::Playing)
         {
+            // Jump: Space en Play (sortie Play déplacée sur Escape).
+            if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space) && m_PlayerOnGround) {
+                m_PlayerVelocity.y = m_JumpVelocity;
+                m_PlayerOnGround = false;
+            }
+
             // 1P : mouvement souris = tourner caméra + corps (sans clic), avant CatScript pour que WASD suivent le regard.
             for (auto& obj : m_Objects) {
                 if (obj.Name != "Player") continue;
@@ -1151,12 +1160,13 @@ public:
         }
 
 
-        // Play / Stop : Space
-        if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space))
-        {
-            if (m_State == EngineState::Editor) EnterPlayMode();
-            else                                StopPlayMode();
-        }
+        // Raccourcis Play:
+        // - Space : Play depuis l'éditeur
+        // - Escape : quitter le mode Play
+        if (!io.WantTextInput && m_State == EngineState::Editor && ImGui::IsKeyPressed(ImGuiKey_Space))
+            EnterPlayMode();
+        if (!io.WantTextInput && m_State == EngineState::Playing && ImGui::IsKeyPressed(ImGuiKey_Escape))
+            StopPlayMode();
 
         // --- Render dans le framebuffer ---
         m_Framebuffer->Bind();
@@ -1725,8 +1735,30 @@ public:
         };
 
         for (const auto& preset : mapPresets) {
-            if (ImGui::Button(preset.Label, ImVec2(120.0f, 0.0f)))
-                LoadMapPreset(preset);
+            if (ImGui::Button(preset.Label, ImVec2(120.0f, 0.0f))) {
+                // MM2 charge la scene authoring (.json) avec colliders invisibles déjà placés.
+                if (std::string(preset.Label) == "MM2") {
+                    LoadScene("assets/models/roblox/mm2/mm2_map.json");
+                    m_CurrentMapName = "MM2";
+                    // Valeurs d'origine MM2 (comme avant le raccordement JSON)
+                    m_CurrentPlayerScale = { 0.5f, 0.5f, 0.5f };
+                    m_CurrentMapSpawn = { 0.0f, 0.8f, 0.0f };
+                }
+                else if (std::string(preset.Label) == "Island") {
+                    LoadScene("assets/models/roblox/island/island_map.json");
+                    m_CurrentMapName = "Island";
+                    m_CurrentPlayerScale = { 0.25f, 0.25f, 0.25f };
+                    m_CurrentMapSpawn = { -3.714f, -4.611f, 2.195f };
+                }
+                else if (std::string(preset.Label) == "Doomspires") {
+                    LoadScene("assets/models/roblox/doomspires/doomspires_map.json");
+                    m_CurrentMapName = "Doomspires";
+                    m_CurrentPlayerScale = { 0.25f, 0.25f, 0.25f };
+                    m_CurrentMapSpawn = { 0.245f, 2.472f, -0.220f };
+                }
+                else
+                    LoadMapPreset(preset);
+            }
             ImGui::SameLine();
         }
         ImGui::NewLine();
@@ -2961,6 +2993,7 @@ private:
     glm::vec3                     m_PlayerVelocity = { 0.0f, 0.0f, 0.0f };
     bool                          m_PlayerOnGround = false;
     float                         m_Gravity = -18.0f;
+    float                         m_JumpVelocity = 6.0f;
     float                         m_ColliderShrinkXZ = 0.12f;
     float                         m_FloorAspectThreshold = 0.20f;
     bool                          m_EnableAutoSpawnSnap = true;
