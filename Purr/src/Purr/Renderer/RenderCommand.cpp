@@ -30,6 +30,22 @@ namespace Purr {
         else         glDisable(GL_DEPTH_TEST);
     }
 
+    void RenderCommand::SetDepthWrite(bool enabled)
+    {
+        glDepthMask(enabled ? GL_TRUE : GL_FALSE);
+    }
+
+    void RenderCommand::SetBlend(bool enabled)
+    {
+        if (enabled) {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        }
+        else {
+            glDisable(GL_BLEND);
+        }
+    }
+
     void RenderCommand::ReadPixels(int x, int y, int width, int height, std::vector<uint8_t>& outPixels)
     {
         outPixels.resize(width * height * 3);

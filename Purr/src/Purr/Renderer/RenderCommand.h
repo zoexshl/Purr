@@ -9,6 +9,8 @@ namespace Purr {
         static void DrawWireframe(const std::shared_ptr<VertexArray>& va);
         static void EnableDepthTest();
         static void SetDepthTest(bool enabled);
+        static void SetDepthWrite(bool enabled);
+        static void SetBlend(bool enabled);
         static void DrawIndexed(const std::shared_ptr<VertexArray>& va);
         static void SetClearColor(float r, float g, float b, float a);
         static void Clear();

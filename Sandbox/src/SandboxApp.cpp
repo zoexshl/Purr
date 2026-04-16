@@ -11,6 +11,7 @@
 #include "nlohmann/json.hpp"
 #include "Purr/ObjLoader.h"
 #include "Purr/Renderer/TextureManager.h"
+#include <algorithm>
 #define GLM_ENABLE_EXPERIMENTAL //ajouté apres avoir etre engeulé par compilateur . 
 #include <glm/gtx/matrix_decompose.hpp> // cas gerer parentng
 
@@ -88,12 +89,15 @@ struct SceneObject {
     std::unique_ptr<ScriptComponent> Script;
     float TexTiling = 1.0f;
     bool IsColliderOnly = false;
+    bool HiddenInHierarchy = false;
+    float Opacity = 1.0f;
 
     SceneObject(const SceneObject& o)
         : Name(o.Name), ParentIndex(o.ParentIndex)  // copier ParentIndex
         , Position(o.Position), Rotation(o.Rotation), Scale(o.Scale)
         , Mat(o.Mat), Type(o.Type), Tex(o.Tex), TexPath(o.TexPath), MeshPath(o.MeshPath), Parts(o.Parts)
         , TexTiling(o.TexTiling), IsColliderOnly(o.IsColliderOnly)
+        , HiddenInHierarchy(o.HiddenInHierarchy), Opacity(o.Opacity)
         , Script(nullptr) {
     }
 
@@ -103,6 +107,8 @@ struct SceneObject {
         Mat = o.Mat; Type = o.Type; Tex = o.Tex; TexPath = o.TexPath; MeshPath = o.MeshPath; Parts = o.Parts;
         TexTiling = o.TexTiling;
         IsColliderOnly = o.IsColliderOnly;
+        HiddenInHierarchy = o.HiddenInHierarchy;
+        Opacity = o.Opacity;
         Script = nullptr; return *this;
     }
     SceneObject() = default;
@@ -232,7 +238,7 @@ public:
         glm::vec3 MapPosition = { 0.0f, 0.0f, 0.0f };
         glm::vec3 MapScale = { 1.0f, 1.0f, 1.0f };
         glm::vec3 PlayerSpawn = { 0.0f, 0.0f, 0.0f }; // utilisé à l'étape gameplay
-        glm::vec3 PlayerScale = { 1.0f, 1.0f, 1.0f };
+        glm::vec3 PlayerScale = { 0.5f, 0.5f, 0.5f };
     };
 
     // Constructeur
@@ -314,6 +320,11 @@ public:
         static const char* s_TypeIcons[] = { "[C]","[P]","[T]","[O]","[N]","[E]","[S]","[M]" };
         ImGui::PushID(i);
 
+        if (m_Objects[i].HiddenInHierarchy && !m_ShowHiddenInSceneList) {
+            ImGui::PopID();
+            return;
+        }
+
         // Trouver les enfants directs
         std::vector<int> children;
         for (int j = 0; j < (int)m_Objects.size(); j++)
@@ -331,6 +342,15 @@ public:
         }
         else
         {
+            bool visInList = !m_Objects[i].HiddenInHierarchy;
+            if (ImGui::Checkbox("##listvis", &visInList)) {
+                SaveSnapshot();
+                m_Objects[i].HiddenInHierarchy = !visInList;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Afficher / masquer dans cette liste (comme Blender)");
+            ImGui::SameLine();
+
             const char* icon = (int)m_Objects[i].Type < 8 ? s_TypeIcons[(int)m_Objects[i].Type] : "[?]";
             std::string label = std::string(icon) + "  " + m_Objects[i].Name;
 
@@ -420,6 +440,24 @@ public:
         m_Objects[src].Rotation = glm::degrees(glm::eulerAngles(orientation));
     }
 
+    void GroupSelectionUnderPivot()
+    {
+        if (m_Selection.size() < 2) return;
+        int parent = m_Selected;
+        if (parent < 0 || !m_Selection.count(parent))
+            parent = *m_Selection.begin();
+
+        std::vector<int> sorted(m_Selection.begin(), m_Selection.end());
+        std::sort(sorted.begin(), sorted.end());
+
+        SaveSnapshot();
+        for (int ch : sorted) {
+            if (ch == parent) continue;
+            if (IsAncestor(ch, parent)) continue;
+            ReparentKeepWorld(ch, parent);
+        }
+        SetPrimarySelected(parent);
+    }
 
     // ---- Helpers sélection ----
     bool IsSelected(int i) const { return m_Selection.count(i) > 0; }
@@ -542,46 +580,29 @@ public:
         for (int i = 0; i < (int)m_Objects.size(); i++) {
             if (i == playerIdx) continue;
             auto& obj = m_Objects[i];
-            if (obj.Type != PrimitiveType::Custom) {
-                if (obj.Type == PrimitiveType::Cube || obj.Type == PrimitiveType::Plane) {
-                    // Collider simple pour primitives editor (dont SpawnMarker).
-                    glm::vec3 half = (obj.Type == PrimitiveType::Cube)
-                        ? glm::vec3(0.5f, 0.5f, 0.5f) * obj.Scale
-                        : glm::vec3(0.5f * obj.Scale.x, 0.06f * glm::max(1.0f, obj.Scale.y), 0.5f * obj.Scale.z);
-                    glm::vec3 bmin = obj.Position - half;
-                    glm::vec3 bmax = obj.Position + half;
-                    if (bmin.x > bmax.x) std::swap(bmin.x, bmax.x);
-                    if (bmin.y > bmax.y) std::swap(bmin.y, bmax.y);
-                    if (bmin.z > bmax.z) std::swap(bmin.z, bmax.z);
-                    glm::vec3 sz = bmax - bmin;
-                    float mh = glm::min(sz.x, sz.z);
-                    bool isFloorPrim = (sz.y > 0.001f) && (sz.y < mh * m_FloorAspectThreshold);
-                    m_PlayStaticColliders.push_back({ bmin, bmax, isFloorPrim });
-                }
+            // Modèles .obj (Custom) : visuel seulement — pas d'AABB par sous-mesh (trop imprécis pour les maps).
+            // Collision = uniquement les primitives Cube / Plan placées à la main (voir « Collider invisible »).
+            if (obj.Type == PrimitiveType::Custom)
                 continue;
-            }
 
-            // S'assure que les parts sont chargées pour récupérer leurs bounds.
-            GetMeshForObject(obj);
-            if (obj.Parts.empty()) continue;
-
-            for (const auto& part : obj.Parts) {
-                glm::vec3 bmin = part.BoundsMin * obj.Scale + obj.Position;
-                glm::vec3 bmax = part.BoundsMax * obj.Scale + obj.Position;
+            if (obj.Type == PrimitiveType::Cube || obj.Type == PrimitiveType::Plane) {
+                glm::vec3 half = (obj.Type == PrimitiveType::Cube)
+                    ? glm::vec3(0.5f, 0.5f, 0.5f) * obj.Scale
+                    : glm::vec3(0.5f * obj.Scale.x, 0.06f * glm::max(1.0f, obj.Scale.y), 0.5f * obj.Scale.z);
+                glm::vec3 bmin = obj.Position - half;
+                glm::vec3 bmax = obj.Position + half;
                 if (bmin.x > bmax.x) std::swap(bmin.x, bmax.x);
                 if (bmin.y > bmax.y) std::swap(bmin.y, bmax.y);
                 if (bmin.z > bmax.z) std::swap(bmin.z, bmax.z);
+                glm::vec3 sz = bmax - bmin;
+                float mh = glm::min(sz.x, sz.z);
+                bool isFloorPrim = (sz.y > 0.001f) && (sz.y < mh * m_FloorAspectThreshold);
 
-                glm::vec3 size = bmax - bmin;
-                float minHoriz = glm::min(size.x, size.z);
-                bool isFloor = (size.y > 0.001f) && (size.y < minHoriz * m_FloorAspectThreshold);
-
-                if (!isFloor) {
-                    // Mur : shrink XZ pour éviter les collisions trop larges
+                if (!isFloorPrim) {
                     glm::vec3 shrink = {
-                        glm::min(size.x * m_ColliderShrinkXZ, 0.35f),
+                        glm::min(sz.x * m_ColliderShrinkXZ, 0.35f),
                         0.0f,
-                        glm::min(size.z * m_ColliderShrinkXZ, 0.35f)
+                        glm::min(sz.z * m_ColliderShrinkXZ, 0.35f)
                     };
                     bmin += shrink;
                     bmax -= shrink;
@@ -589,13 +610,12 @@ public:
                         continue;
                 }
                 else {
-                    // Plancher : pas de shrink XZ (évite les trous entre dalles), fine dalle en haut
                     float topY = bmax.y;
-                    bmin.y = topY - glm::min(0.05f, size.y * 0.5f);
+                    bmin.y = topY - glm::min(0.05f, sz.y * 0.5f);
                     bmax.y = topY;
                 }
 
-                m_PlayStaticColliders.push_back({ bmin, bmax, isFloor });
+                m_PlayStaticColliders.push_back({ bmin, bmax, isFloorPrim });
             }
         }
 
@@ -1050,16 +1070,18 @@ public:
             }
             };
 
-        for (auto& obj : m_Objects)
-        {
+        auto drawObjectAtIndex = [&](int objIdx) {
+            SceneObject& obj = m_Objects[objIdx];
             if (m_State == EngineState::Playing && obj.IsColliderOnly)
-                continue;
+                return;
 
             glm::mat4 model = obj.GetWorldTransform(m_Objects);
             glm::mat4 normalMat = glm::transpose(glm::inverse(model));
 
             auto va = GetMeshForObject(obj);
-            if (!va) continue;  // mesh pas encore chargé ou fichier invalide
+            if (!va) return;
+
+            const float op = glm::clamp(obj.Opacity, 0.0f, 1.0f);
 
             auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint) {
                 glm::vec3 finalDiffuse = obj.Mat.Diffuse * diffuseTint;
@@ -1073,6 +1095,7 @@ public:
                     m_TexShader->SetFloat("u_MatShininess", obj.Mat.Shininess);
                     m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
                     m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    m_TexShader->SetFloat("u_Opacity", op);
                     m_TexShader->SetInt("u_Texture", 0);
                     tex->Bind(0);
                     Purr::RenderCommand::DrawIndexed(mesh);
@@ -1087,6 +1110,7 @@ public:
                     m_Shader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
                     m_Shader->SetFloat("u_MatShininess", obj.Mat.Shininess);
                     m_Shader->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    m_Shader->SetFloat("u_Opacity", op);
                     Purr::RenderCommand::DrawIndexed(mesh);
                 }
             };
@@ -1095,13 +1119,51 @@ public:
                 for (auto& part : obj.Parts) {
                     if (!part.Mesh)
                         continue;
-                    // Ne pas forcer une texture fallback d'un autre matériau.
                     drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint);
                 }
             }
             else {
                 drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f));
             }
+        };
+
+        struct TransparentDraw {
+            int Idx = 0;
+            float Dist = 0.0f;
+        };
+        std::vector<TransparentDraw> transparent;
+        transparent.reserve(m_Objects.size());
+        for (int i = 0; i < (int)m_Objects.size(); i++) {
+            const SceneObject& o = m_Objects[i];
+            if (m_State == EngineState::Playing && o.IsColliderOnly)
+                continue;
+            const float op = glm::clamp(o.Opacity, 0.0f, 1.0f);
+            if (op < 0.999f && op > 1e-4f) {
+                glm::vec3 wp = o.GetWorldPosition(m_Objects);
+                transparent.push_back({ i, glm::length(wp - camPos) });
+            }
+        }
+        std::sort(transparent.begin(), transparent.end(),
+            [](const TransparentDraw& a, const TransparentDraw& b) { return a.Dist > b.Dist; });
+
+        Purr::RenderCommand::SetDepthWrite(true);
+        for (int i = 0; i < (int)m_Objects.size(); i++) {
+            const SceneObject& o = m_Objects[i];
+            if (m_State == EngineState::Playing && o.IsColliderOnly)
+                continue;
+            const float op = glm::clamp(o.Opacity, 0.0f, 1.0f);
+            if (op < 0.999f)
+                continue;
+            drawObjectAtIndex(i);
+        }
+
+        if (!transparent.empty()) {
+            Purr::RenderCommand::SetBlend(true);
+            Purr::RenderCommand::SetDepthWrite(false);
+            for (const auto& t : transparent)
+                drawObjectAtIndex(t.Idx);
+            Purr::RenderCommand::SetDepthWrite(true);
+            Purr::RenderCommand::SetBlend(false);
         }
 
         // Bounding boxes pour tous les sélectionnés
@@ -1381,14 +1443,20 @@ public:
         if (ImGui::RadioButton("Orthographic", !isPersp)) m_Camera.SetProjectionMode(Purr::ProjectionMode::Orthographic);
         ImGui::Separator();
         ImGui::Text("Objets (%zu)", m_Objects.size());
+        ImGui::Checkbox("Afficher masques (liste)", &m_ShowHiddenInSceneList);
+        ImGui::TextDisabled("Masquer un objet : decoche la case a gauche de son nom.");
 
 
 
 
         // ---- Scene list (hiérarchique) ----
-        for (int i = 0; i < (int)m_Objects.size(); i++)
-            if (m_Objects[i].ParentIndex == -1)    // racines seulement
-                DrawHierarchyNode(i);
+        for (int i = 0; i < (int)m_Objects.size(); i++) {
+            if (m_Objects[i].ParentIndex != -1)
+                continue;
+            if (m_Objects[i].HiddenInHierarchy && !m_ShowHiddenInSceneList)
+                continue;
+            DrawHierarchyNode(i);
+        }
 
         // Drop sur zone vide = détacher du parent
         ImGui::InvisibleButton("##droprootzone", ImVec2(-1, 20));
@@ -1444,6 +1512,14 @@ public:
                 : "-  Supprimer";
             if (ImGui::Button(delLabel.c_str()))
                 DeleteSelection();
+            if (m_Selection.size() >= 2) {
+                ImGui::SameLine();
+                if (ImGui::Button("Grouper sous pivot")) {
+                    GroupSelectionUnderPivot();
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("Le pivot (selection principal) devient parent des autres.");
+            }
         }
 
 
@@ -1515,9 +1591,9 @@ public:
         if (m_State == EngineState::Playing) ImGui::BeginDisabled();
 
         const MapPreset mapPresets[] = {
-            { "MM2", "assets/models/roblox/mm2/mm2map1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 0.8f, 0.0f}, {1.1f, 1.1f, 1.1f} },
-            { "Island", "assets/models/roblox/island/island1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, -0.210f, -0.187f}, {0.368f, 0.368f, 0.368f} },
-            { "Doomspires", "assets/models/roblox/doomspires/doomspires1Tex.obj", {0.0f, 0.0f, 0.0f}, {18.0f, 18.0f, 18.0f}, {0.0f, 1.2f, 0.0f}, {1.3f, 1.3f, 1.3f} },
+            { "MM2", "assets/models/roblox/mm2/mm2map1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, 0.8f, 0.0f}, {0.5f, 0.5f, 0.5f} },
+            { "Island", "assets/models/roblox/island/island1Tex.obj", {0.0f, 0.0f, 0.0f}, {16.0f, 16.0f, 16.0f}, {0.0f, -0.210f, -0.187f}, {0.5f, 0.5f, 0.5f} },
+            { "Doomspires", "assets/models/roblox/doomspires/doomspires1Tex.obj", {0.0f, 0.0f, 0.0f}, {18.0f, 18.0f, 18.0f}, {0.0f, 1.2f, 0.0f}, {0.5f, 0.5f, 0.5f} },
         };
 
         for (const auto& preset : mapPresets) {
@@ -1563,9 +1639,10 @@ public:
             ImGui::DragFloat("Follow Speed", &m_PlayCamFollowSpeed, 0.1f, 1.0f, 30.0f);
             ImGui::Separator();
             ImGui::Text("Collision");
-            ImGui::SliderFloat("Collider Shrink XZ", &m_ColliderShrinkXZ, 0.0f, 0.35f);
+            ImGui::TextDisabled("Les maps .obj n'ont pas de collision auto : ajoute des Cube/Plan.");
+            ImGui::SliderFloat("Shrink XZ (murs Cube/Plan)", &m_ColliderShrinkXZ, 0.0f, 0.35f);
             ImGui::SliderFloat("Floor flatness (h / min XZ)", &m_FloorAspectThreshold, 0.05f, 0.5f);
-            ImGui::TextDisabled("Ces valeurs seront utilisees au prochain Play.");
+            ImGui::TextDisabled("Utilise au prochain Play.");
         }
 
         if (m_State == EngineState::Playing) ImGui::EndDisabled();
@@ -1666,6 +1743,10 @@ public:
             ImGui::DragFloat3("Scale", glm::value_ptr(obj.Scale), 0.01f, 0.01f, 10.0f);
             if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
             if (ImGui::Checkbox("Collider invisible (jeu)", &obj.IsColliderOnly))
+                SaveSnapshot();
+            ImGui::SliderFloat("Opacite (vue)", &obj.Opacity, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
+            if (ImGui::Checkbox("Masque dans la liste Scene", &obj.HiddenInHierarchy))
                 SaveSnapshot();
             ImGui::Separator();
             ImGui::Text("Texture");
@@ -1850,6 +1931,8 @@ public:
             o["shininess"] = obj.Mat.Shininess;
             o["illum"] = (int)obj.Mat.Model;
             o["colliderOnly"] = obj.IsColliderOnly;
+            o["hiddenInList"] = obj.HiddenInHierarchy;
+            o["opacity"] = obj.Opacity;
             j["objects"].push_back(o);
         }
         std::ofstream f(path);
@@ -1897,6 +1980,8 @@ public:
             obj.Mat.Shininess = o["shininess"];
             obj.Mat.Model = (IlluminationModel)(int)o["illum"];
             obj.IsColliderOnly = o.value("colliderOnly", false);
+            obj.HiddenInHierarchy = o.value("hiddenInList", false);
+            obj.Opacity = o.value("opacity", 1.0f);
             if (!obj.TexPath.empty())
                 obj.Tex = Purr::TextureManager::Load(obj.TexPath);
             m_Objects.push_back(obj);
@@ -2567,6 +2652,7 @@ private:
             uniform float u_AmbientStrength;
             uniform vec3 u_CamPos,u_MatAmbient,u_MatDiffuse,u_MatSpecular;
             uniform float u_MatShininess; uniform int u_IllumModel;
+            uniform float u_Opacity;
             out vec4 color;
             void main(){
                 vec3 N=normalize(v_Normal),V=normalize(u_CamPos-v_FragPos);
@@ -2581,7 +2667,7 @@ private:
                     if(u_IllumModel==1){vec3 R=reflect(-L,N);r+=pow(max(dot(V,R),0.0),u_MatShininess)*lc*u_MatSpecular;}
                     else if(u_IllumModel==2){vec3 H=normalize(L+V);r+=pow(max(dot(N,H),0.0),u_MatShininess)*lc*u_MatSpecular;}
                 }
-                color=vec4(r,1.0);
+                color=vec4(r,u_Opacity);
             })";
         m_Shader = std::make_shared<Purr::Shader>(vs, fs);
     }
@@ -2610,7 +2696,8 @@ private:
             uniform vec3 u_CamPos,u_MatDiffuse,u_MatSpecular;
             uniform float u_MatShininess; uniform int u_IllumModel;
             uniform sampler2D u_Texture;
-            uniform float u_TilingFactor; 
+            uniform float u_TilingFactor;
+            uniform float u_Opacity;
             out vec4 color;
 
             void main(){
@@ -2629,7 +2716,7 @@ private:
                     if(u_IllumModel==1){vec3 R=reflect(-L,N);r+=pow(max(dot(V,R),0.0),u_MatShininess)*lc*u_MatSpecular;}
                     else if(u_IllumModel==2){vec3 H=normalize(L+V);r+=pow(max(dot(N,H),0.0),u_MatShininess)*lc*u_MatSpecular;}
                 }
-                color=vec4(r,1.0);
+                color=vec4(r,u_Opacity);
             })";
         m_TexShader = std::make_shared<Purr::Shader>(vs, fs);
     }
@@ -2667,6 +2754,7 @@ private:
     // Scene
     std::vector<SceneObject>     m_Objects;
     int                          m_Selected = 0;          // pivot principal (gizmo)
+    bool                         m_ShowHiddenInSceneList = false;
     std::unordered_set<int>      m_Selection;             // tous les sélectionnés
     std::vector<SceneObject>     m_Clipboard;             // copier/coller
 
@@ -2713,7 +2801,7 @@ private:
     std::unordered_map<std::string, std::string>                        m_ObjTexCache;
     std::string                                                         m_CurrentMapName;
     glm::vec3                                                           m_CurrentMapSpawn = { 0.0f, 0.0f, 0.0f };
-    glm::vec3                                                           m_CurrentPlayerScale = { 1.0f, 1.0f, 1.0f };
+    glm::vec3                                                           m_CurrentPlayerScale = { 0.5f, 0.5f, 0.5f };
 
     // Play mode
     enum class EngineState { Editor, Playing };
