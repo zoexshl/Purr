@@ -25,6 +25,10 @@ struct LoadedMesh {
     std::string             TexturePath; // si dispo dans le fichier
     // Skinned animation (pipeline stage 2): metadata du squelette par mesh.
     std::vector<LoadedBone> Bones;
+    // Pour FBX "rigid parts" (sans skinning): noeud source du mesh + bind global.
+    std::string             SourceNodeName;
+    glm::mat4               SourceNodeBindLocal = glm::mat4(1.0f);
+    glm::mat4               SourceNodeBindGlobal = glm::mat4(1.0f);
 };
 
 struct LoadedNode {
@@ -71,6 +75,8 @@ struct LoadedAnimatedAsset {
 struct AnimationPoseResult {
     // Transform global par noeud (meme index que LoadedAnimatedAsset::Nodes).
     std::vector<glm::mat4> GlobalNodeTransforms;
+    std::unordered_map<std::string, glm::mat4> LocalNodeTransformsByName;
+    std::unordered_map<std::string, glm::mat4> GlobalNodeTransformsByName;
     // Matrices finales de skinning par bone name.
     std::unordered_map<std::string, glm::mat4> FinalBoneMatricesByName;
 };

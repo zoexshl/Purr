@@ -1,6 +1,8 @@
 // AssimpLoader.cpp
 #include "purrpch.h"
 #include "AssimpLoader.h"
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
@@ -67,6 +69,30 @@ namespace
 
         for (unsigned int i = 0; i < node->mNumChildren; ++i)
             BuildNodeHierarchyRecursive(node->mChildren[i], thisIndex, outNodes);
+    }
+
+    void BuildMeshNodeBindingsRecursive(
+        const aiNode* node,
+        const glm::mat4& parentGlobal,
+        std::vector<std::string>& meshNodeNames,
+        std::vector<glm::mat4>& meshBindLocals,
+        std::vector<glm::mat4>& meshBindGlobals)
+    {
+        if (!node)
+            return;
+        glm::mat4 local = AiToGlm(node->mTransformation);
+        glm::mat4 global = parentGlobal * local;
+        const std::string nodeName = node->mName.C_Str();
+        for (unsigned int i = 0; i < node->mNumMeshes; ++i) {
+            const unsigned int meshIdx = node->mMeshes[i];
+            if (meshIdx >= meshNodeNames.size())
+                continue;
+            meshNodeNames[meshIdx] = nodeName;
+            meshBindLocals[meshIdx] = local;
+            meshBindGlobals[meshIdx] = global;
+        }
+        for (unsigned int i = 0; i < node->mNumChildren; ++i)
+            BuildMeshNodeBindingsRecursive(node->mChildren[i], global, meshNodeNames, meshBindLocals, meshBindGlobals);
     }
 
     glm::vec3 SamplePosition(const LoadedNodeAnimation& ch, float tTicks)
@@ -148,6 +174,9 @@ LoadedAnimatedAsset LoadAnimatedAsset(const std::string& filepath)
 
     LoadedAnimatedAsset asset;
     asset.Meshes.reserve(scene->mNumMeshes);
+    std::vector<std::string> meshNodeNames(scene->mNumMeshes);
+    std::vector<glm::mat4> meshBindLocals(scene->mNumMeshes, glm::mat4(1.0f));
+    std::vector<glm::mat4> meshBindGlobals(scene->mNumMeshes, glm::mat4(1.0f));
 
     auto pickTexturePath = [](aiMaterial* mat) -> std::string
     {
@@ -253,6 +282,12 @@ LoadedAnimatedAsset LoadAnimatedAsset(const std::string& filepath)
     }
 
     BuildNodeHierarchyRecursive(scene->mRootNode, -1, asset.Nodes);
+    BuildMeshNodeBindingsRecursive(scene->mRootNode, glm::mat4(1.0f), meshNodeNames, meshBindLocals, meshBindGlobals);
+    for (unsigned int m = 0; m < scene->mNumMeshes && m < asset.Meshes.size(); ++m) {
+        asset.Meshes[m].SourceNodeName = meshNodeNames[m];
+        asset.Meshes[m].SourceNodeBindLocal = meshBindLocals[m];
+        asset.Meshes[m].SourceNodeBindGlobal = meshBindGlobals[m];
+    }
 
     asset.Animations.reserve(scene->mNumAnimations);
     for (unsigned int ai = 0; ai < scene->mNumAnimations; ++ai) {
@@ -348,11 +383,28 @@ AnimationPoseResult EvaluateAnimationPose(
         auto it = channelByNodeName.find(node.Name);
         if (it != channelByNodeName.end() && it->second) {
             const LoadedNodeAnimation& ch = *it->second;
-            glm::vec3 p = SamplePosition(ch, tTicks);
-            glm::quat r = SampleRotation(ch, tTicks);
-            glm::vec3 s = SampleScale(ch, tTicks);
-            local = glm::translate(glm::mat4(1.0f), p) * glm::mat4_cast(r) * glm::scale(glm::mat4(1.0f), s);
+            // Mixamo (et beaucoup de FBX) n'ont des cles que sur rotation pour la plupart des os :
+            // remplacer toute la matrice par T*R*S echantillonne mettait P=(0,0,0) et cassait la chaine.
+            glm::vec3 restScale;
+            glm::quat restRot;
+            glm::vec3 restTrans;
+            glm::vec3 skew;
+            glm::vec4 persp;
+            if (glm::decompose(node.LocalTransform, restScale, restRot, restTrans, skew, persp)) {
+                restRot = glm::normalize(restRot);
+                glm::vec3 p = restTrans;
+                if (!ch.PositionKeys.empty())
+                    p = SamplePosition(ch, tTicks);
+                glm::quat r = restRot;
+                if (!ch.RotationKeys.empty())
+                    r = SampleRotation(ch, tTicks);
+                glm::vec3 s = restScale;
+                if (!ch.ScaleKeys.empty())
+                    s = SampleScale(ch, tTicks);
+                local = glm::recompose(s, glm::normalize(r), p, skew, persp);
+            }
         }
+        out.LocalNodeTransformsByName[node.Name] = local;
 
         if (node.ParentIndex >= 0 && node.ParentIndex < (int)out.GlobalNodeTransforms.size())
             out.GlobalNodeTransforms[i] = out.GlobalNodeTransforms[node.ParentIndex] * local;
@@ -362,8 +414,10 @@ AnimationPoseResult EvaluateAnimationPose(
 
     std::unordered_map<std::string, glm::mat4> nodeGlobalByName;
     nodeGlobalByName.reserve(asset.Nodes.size());
-    for (size_t i = 0; i < asset.Nodes.size(); ++i)
+    for (size_t i = 0; i < asset.Nodes.size(); ++i) {
         nodeGlobalByName[asset.Nodes[i].Name] = out.GlobalNodeTransforms[i];
+        out.GlobalNodeTransformsByName[asset.Nodes[i].Name] = out.GlobalNodeTransforms[i];
+    }
 
     for (const auto& mesh : asset.Meshes) {
         for (const auto& bone : mesh.Bones) {

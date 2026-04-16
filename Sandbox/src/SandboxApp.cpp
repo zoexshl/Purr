@@ -98,6 +98,9 @@ struct SceneObject {
         std::shared_ptr<Purr::Texture> Texture = nullptr;
         std::string TexturePath;
         std::vector<std::string> BoneNames;
+        std::string AnimNodeName;
+        glm::mat4   AnimNodeBindLocal = glm::mat4(1.0f);
+        glm::mat4   AnimNodeBindGlobal = glm::mat4(1.0f);
         glm::vec3 DiffuseTint = glm::vec3(1.0f);
         glm::vec3 BoundsMin = glm::vec3(0.0f);
         glm::vec3 BoundsMax = glm::vec3(0.0f);
@@ -227,6 +230,7 @@ struct SceneObject {
 
 static float s_PlayCameraAzimuthDeg = 35.0f;
 static bool  s_PlayCameraFirstPerson = false;
+static bool  s_PlayEmoteLockMovement = false;
 
 
 
@@ -244,6 +248,8 @@ public:
 
     void OnUpdate(float dt) override
     {
+        if (s_PlayEmoteLockMovement)
+            return;
         glm::vec3 move = { 0,0,0 };
         float az = glm::radians(s_PlayCameraAzimuthDeg);
         glm::vec3 forward = glm::normalize(glm::vec3(-cosf(az), 0.0f, -sinf(az)));
@@ -827,6 +833,35 @@ public:
         return glm::max(m_CurrentPlayerScale * GetAvatarScaleMultiplier(), glm::vec3(0.01f));
     }
 
+    void TryLoadMaleHipHopClip()
+    {
+        m_MaleHipHopClipLoaded = false;
+        m_MaleHipHopClip = {};
+        LoadedAnimatedAsset animAsset = LoadAnimatedAsset("assets/models/roblox/male_player/source/Hip Hop Dancing.fbx");
+        if (!animAsset.Animations.empty()) {
+            m_MaleHipHopClip = animAsset.Animations.front();
+            // Emote sur place: pos/scale du clip Mixamo != bind 12.fbx (unites, facteurs 0.01, etc.) -> delta faux.
+            // On n'anime que les rotations; translations et echelles viennent du rest pose du mesh joueur.
+            for (auto& ch : m_MaleHipHopClip.Channels) {
+                ch.PositionKeys.clear();
+                ch.ScaleKeys.clear();
+            }
+            // Hip hop: 'metarig' est une feuille quasi-identite; sur 12.fbx c'est un noeud collapse (scale + offset).
+            // Les rotation keys du clip desalignent tout le rig -> on garde la bind pose de 12.fbx pour ce noeud.
+            auto& chans = m_MaleHipHopClip.Channels;
+            chans.erase(
+                std::remove_if(chans.begin(), chans.end(),
+                    [](const LoadedNodeAnimation& ch) { return ch.NodeName == "metarig"; }),
+                chans.end());
+            m_MaleHipHopClipLoaded = true;
+            PURR_INFO("Male emote clip loaded: '{}' channels={} (metarig exclu)",
+                m_MaleHipHopClip.Name, (int)m_MaleHipHopClip.Channels.size());
+        }
+        else {
+            PURR_WARN("Male emote clip missing or invalid: assets/models/roblox/male_player/source/Hip Hop Dancing.fbx");
+        }
+    }
+
     void ImportFBXGrouped(const std::string& path)
     {
         auto animated = LoadAnimatedAsset(path);
@@ -888,6 +923,9 @@ public:
             part.Mesh = BuildVertexArrayFromLoadedMesh(meshes[i]);
             for (const auto& b : meshes[i].Bones)
                 part.BoneNames.push_back(b.Name);
+            part.AnimNodeName = meshes[i].SourceNodeName;
+            part.AnimNodeBindLocal = meshes[i].SourceNodeBindLocal;
+            part.AnimNodeBindGlobal = meshes[i].SourceNodeBindGlobal;
             part.DiffuseTint = glm::vec3(1.0f);
             std::string resolvedTex = ResolveImportedTexturePath(path, meshes[i].TexturePath);
             // Important: ne pas appliquer un fallback global a toutes les parts.
@@ -924,6 +962,13 @@ public:
         m_SavedCamera.Azimuth = m_Camera.GetAzimuth();
         m_SavedCamera.Elevation = m_Camera.GetElevation();
         m_State = EngineState::Playing;
+        m_PlayEmoteMenuOpen = false;
+        m_PlayMaleEmoteActive = false;
+        m_PlayMaleEmoteTime = 0.0f;
+        m_PlayEmoteDebugTimer = 0.0f;
+        s_PlayEmoteLockMovement = false;
+        if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male)
+            TryLoadMaleHipHopClip();
         m_GizmoDragging = false;
         m_ActiveAxis = GizmoAxis::None;
 
@@ -1012,6 +1057,11 @@ public:
         m_Projectiles.clear();
         m_BazookaCooldownTimer = 0.0f;
         m_PlayBazookaEquipped = false;
+        m_PlayEmoteMenuOpen = false;
+        m_PlayMaleEmoteActive = false;
+        m_PlayMaleEmoteTime = 0.0f;
+        m_PlayEmoteDebugTimer = 0.0f;
+        s_PlayEmoteLockMovement = false;
         m_Selection.clear();
         m_Selected = -1;
 
@@ -1660,19 +1710,61 @@ public:
             AnimationPoseResult skinPose;
             bool hasSkinPose = false;
             auto assetIt = m_AnimatedAssetCache.find(obj.MeshPath);
-            if (assetIt != m_AnimatedAssetCache.end() && !assetIt->second.Animations.empty()) {
-                skinPose = EvaluateAnimationPose(assetIt->second, assetIt->second.Animations.front(), m_SkinnedAnimTime);
-                hasSkinPose = true;
+            if (assetIt != m_AnimatedAssetCache.end()) {
+                const bool isMalePlayer = (obj.Name == "Player" && m_PlayerAvatarChoice == PlayerAvatarChoice::Male);
+                if (isMalePlayer && m_PlayMaleEmoteActive && m_MaleHipHopClipLoaded) {
+                    skinPose = EvaluateAnimationPose(assetIt->second, m_MaleHipHopClip, m_PlayMaleEmoteTime);
+                    hasSkinPose = true;
+                }
+                else if (!assetIt->second.Animations.empty()) {
+                    skinPose = EvaluateAnimationPose(assetIt->second, assetIt->second.Animations.front(), m_SkinnedAnimTime);
+                    hasSkinPose = true;
+                }
             }
-            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint, const std::vector<std::string>& boneNames) {
+            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint, const std::vector<std::string>& boneNames, const std::string& animNodeName, const glm::mat4& animNodeBindGlobal) {
                 glm::vec3 finalDiffuse = obj.Mat.Diffuse * diffuseTint;
-                if (tex || obj.UseProceduralTexture) {
+                glm::mat4 drawModel = model;
+                if (hasSkinPose && boneNames.empty() && !animNodeName.empty()) {
+                    auto itG = skinPose.GlobalNodeTransformsByName.find(animNodeName);
+                    if (itG != skinPose.GlobalNodeTransformsByName.end()) {
+                        glm::mat4 delta = glm::inverse(animNodeBindGlobal) * itG->second;
+                        drawModel = model * delta;
+                    }
+                }
+                glm::mat4 drawNormalMat = glm::transpose(glm::inverse(drawModel));
+                if (hasSkinPose && !boneNames.empty()) {
+                    auto& sh = m_TexSkinShader;
+                    sh->Bind();
+                    uploadLights(sh);
+                    sh->SetMat4("u_Model", drawModel);
+                    sh->SetMat4("u_NormalMat", drawNormalMat);
+                    sh->SetFloat3("u_MatDiffuse", finalDiffuse);
+                    sh->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                    sh->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                    sh->SetFloat("u_TilingFactor", obj.TexTiling);
+                    sh->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    sh->SetFloat("u_Opacity", op);
+                    sh->SetInt("u_UseProceduralTex", obj.UseProceduralTexture ? 1 : 0);
+                    sh->SetFloat("u_ProceduralTexScale", obj.ProceduralTexScale);
+                    sh->SetInt("u_Texture", 0);
+                    for (int bi = 0; bi < 100; ++bi)
+                        sh->SetMat4("u_BoneMatrices[" + std::to_string(bi) + "]", glm::mat4(1.0f));
+                    for (size_t bi = 0; bi < boneNames.size() && bi < 100; ++bi) {
+                        auto itBone = skinPose.FinalBoneMatricesByName.find(boneNames[bi]);
+                        if (itBone != skinPose.FinalBoneMatricesByName.end())
+                            sh->SetMat4("u_BoneMatrices[" + std::to_string((int)bi) + "]", itBone->second);
+                    }
+                    if (tex) tex->Bind(0);
+                    else if (m_CheckerTex) m_CheckerTex->Bind(0);
+                    Purr::RenderCommand::DrawIndexed(mesh);
+                }
+                else if (tex || obj.UseProceduralTexture) {
                     bool useSkinnedShader = hasSkinPose && !boneNames.empty();
                     auto& sh = useSkinnedShader ? m_TexSkinShader : m_TexShader;
                     sh->Bind();
                     uploadLights(sh);
-                    sh->SetMat4("u_Model", model);
-                    sh->SetMat4("u_NormalMat", normalMat);
+                    sh->SetMat4("u_Model", drawModel);
+                    sh->SetMat4("u_NormalMat", drawNormalMat);
                     sh->SetFloat3("u_MatDiffuse", finalDiffuse);
                     sh->SetFloat3("u_MatSpecular", obj.Mat.Specular);
                     sh->SetFloat("u_MatShininess", obj.Mat.Shininess);
@@ -1692,13 +1784,14 @@ public:
                         }
                     }
                     if (tex) tex->Bind(0);
+                    else if (m_CheckerTex) m_CheckerTex->Bind(0);
                     Purr::RenderCommand::DrawIndexed(mesh);
                 }
                 else {
                     m_Shader->Bind();
                     uploadLights(m_Shader);
-                    m_Shader->SetMat4("u_Model", model);
-                    m_Shader->SetMat4("u_NormalMat", normalMat);
+                    m_Shader->SetMat4("u_Model", drawModel);
+                    m_Shader->SetMat4("u_NormalMat", drawNormalMat);
                     m_Shader->SetFloat3("u_MatAmbient", obj.Mat.Ambient);
                     m_Shader->SetFloat3("u_MatDiffuse", finalDiffuse);
                     m_Shader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
@@ -1710,9 +1803,9 @@ public:
             };
             if (obj.Type == PrimitiveType::Custom && !obj.Parts.empty()) {
                 for (auto& part : obj.Parts)
-                    if (part.Mesh) drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint, part.BoneNames);
+                    if (part.Mesh) drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint, part.BoneNames, part.AnimNodeName, part.AnimNodeBindGlobal);
             }
-            else drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f), {});
+            else drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f), {}, "", glm::mat4(1.0f));
         };
 
         struct TransparentDraw { int Idx = 0; float Dist = 0.0f; };
@@ -2087,8 +2180,65 @@ public:
         if (m_State == EngineState::Playing)
         {
             m_BazookaCooldownTimer = glm::max(0.0f, m_BazookaCooldownTimer - dt);
+            if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayMaleEmoteActive)
+                m_PlayMaleEmoteTime += dt;
+            s_PlayEmoteLockMovement = (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayMaleEmoteActive);
+            if (!io.WantTextInput && m_PlayerAvatarChoice == PlayerAvatarChoice::Male && ImGui::IsKeyPressed(ImGuiKey_E))
+                m_PlayEmoteMenuOpen = !m_PlayEmoteMenuOpen;
+            if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayMaleEmoteActive) {
+                m_PlayEmoteDebugTimer -= dt;
+                if (m_PlayEmoteDebugTimer <= 0.0f) {
+                    m_PlayEmoteDebugTimer = 1.0f;
+                    int pIdxDbg = FindObjectByName("Player");
+                    if (pIdxDbg >= 0 && pIdxDbg < (int)m_Objects.size()) {
+                        const std::string& meshPath = m_Objects[pIdxDbg].MeshPath;
+                        auto assetItDbg = m_AnimatedAssetCache.find(meshPath);
+                        if (assetItDbg != m_AnimatedAssetCache.end()) {
+                            const auto& asset = assetItDbg->second;
+                            int matchedChannels = 0;
+                            for (const auto& ch : m_MaleHipHopClip.Channels) {
+                                for (const auto& n : asset.Nodes) {
+                                    if (n.Name == ch.NodeName) { matchedChannels++; break; }
+                                }
+                            }
+                            AnimationPoseResult poseDbg = EvaluateAnimationPose(asset, m_MaleHipHopClip, m_PlayMaleEmoteTime);
+                            int matchedBones = 0;
+                            int meshesWithAnimNode = 0;
+                            std::string firstAnimNodeName;
+                            if (!asset.Meshes.empty()) {
+                                for (const auto& b : asset.Meshes.front().Bones) {
+                                    if (poseDbg.FinalBoneMatricesByName.find(b.Name) != poseDbg.FinalBoneMatricesByName.end())
+                                        matchedBones++;
+                                }
+                                for (const auto& m : asset.Meshes) {
+                                    if (!m.SourceNodeName.empty()) {
+                                        meshesWithAnimNode++;
+                                        if (firstAnimNodeName.empty())
+                                            firstAnimNodeName = m.SourceNodeName;
+                                    }
+                                }
+                            }
+                            PURR_INFO("Emote dbg: t={:.2f} clip='{}' channels={} matchedChannels={} nodes={} meshes={} meshesWithAnimNode={} firstAnimNode='{}' bones(firstMesh)={} matchedBones={} finalMats={}",
+                                m_PlayMaleEmoteTime,
+                                m_MaleHipHopClip.Name,
+                                (int)m_MaleHipHopClip.Channels.size(),
+                                matchedChannels,
+                                (int)asset.Nodes.size(),
+                                (int)asset.Meshes.size(),
+                                meshesWithAnimNode,
+                                firstAnimNodeName,
+                                asset.Meshes.empty() ? 0 : (int)asset.Meshes.front().Bones.size(),
+                                matchedBones,
+                                (int)poseDbg.FinalBoneMatricesByName.size());
+                        }
+                        else {
+                            PURR_WARN("Emote dbg: player mesh asset not cached for '{}'", meshPath);
+                        }
+                    }
+                }
+            }
             // Jump: Space en Play (sortie Play déplacée sur Escape).
-            if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space) && m_PlayerOnGround) {
+            if (!io.WantTextInput && !s_PlayEmoteLockMovement && ImGui::IsKeyPressed(ImGuiKey_Space) && m_PlayerOnGround) {
                 m_PlayerVelocity.y = m_JumpVelocity;
                 m_PlayerOnGround = false;
             }
@@ -2183,20 +2333,35 @@ public:
             AnimationPoseResult skinPose;
             bool hasSkinPose = false;
             auto assetIt = m_AnimatedAssetCache.find(obj.MeshPath);
-            if (assetIt != m_AnimatedAssetCache.end() && !assetIt->second.Animations.empty()) {
-                skinPose = EvaluateAnimationPose(assetIt->second, assetIt->second.Animations.front(), m_SkinnedAnimTime);
-                hasSkinPose = true;
+            if (assetIt != m_AnimatedAssetCache.end()) {
+                const bool isMalePlayer = (obj.Name == "Player" && m_PlayerAvatarChoice == PlayerAvatarChoice::Male);
+                if (isMalePlayer && m_PlayMaleEmoteActive && m_MaleHipHopClipLoaded) {
+                    skinPose = EvaluateAnimationPose(assetIt->second, m_MaleHipHopClip, m_PlayMaleEmoteTime);
+                    hasSkinPose = true;
+                }
+                else if (!assetIt->second.Animations.empty()) {
+                    skinPose = EvaluateAnimationPose(assetIt->second, assetIt->second.Animations.front(), m_SkinnedAnimTime);
+                    hasSkinPose = true;
+                }
             }
 
-            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint, const std::vector<std::string>& boneNames) {
+            auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint, const std::vector<std::string>& boneNames, const std::string& animNodeName, const glm::mat4& animNodeBindGlobal) {
                 glm::vec3 finalDiffuse = obj.Mat.Diffuse * diffuseTint;
-                if (tex || obj.UseProceduralTexture) {
-                    bool useSkinnedShader = hasSkinPose && !boneNames.empty();
-                    auto& sh = useSkinnedShader ? m_TexSkinShader : m_TexShader;
+                glm::mat4 drawModel = model;
+                if (hasSkinPose && boneNames.empty() && !animNodeName.empty()) {
+                    auto itG = skinPose.GlobalNodeTransformsByName.find(animNodeName);
+                    if (itG != skinPose.GlobalNodeTransformsByName.end()) {
+                        glm::mat4 delta = glm::inverse(animNodeBindGlobal) * itG->second;
+                        drawModel = model * delta;
+                    }
+                }
+                glm::mat4 drawNormalMat = glm::transpose(glm::inverse(drawModel));
+                if (hasSkinPose && !boneNames.empty()) {
+                    auto& sh = m_TexSkinShader;
                     sh->Bind();
                     uploadLights(sh);
-                    sh->SetMat4("u_Model", model);
-                    sh->SetMat4("u_NormalMat", normalMat);
+                    sh->SetMat4("u_Model", drawModel);
+                    sh->SetMat4("u_NormalMat", drawNormalMat);
                     sh->SetFloat3("u_MatDiffuse", finalDiffuse);
                     sh->SetFloat3("u_MatSpecular", obj.Mat.Specular);
                     sh->SetFloat("u_MatShininess", obj.Mat.Shininess);
@@ -2206,23 +2371,41 @@ public:
                     sh->SetInt("u_UseProceduralTex", obj.UseProceduralTexture ? 1 : 0);
                     sh->SetFloat("u_ProceduralTexScale", obj.ProceduralTexScale);
                     sh->SetInt("u_Texture", 0);
-                    if (useSkinnedShader) {
-                        for (int bi = 0; bi < 100; ++bi)
-                            sh->SetMat4("u_BoneMatrices[" + std::to_string(bi) + "]", glm::mat4(1.0f));
-                        for (size_t bi = 0; bi < boneNames.size() && bi < 100; ++bi) {
-                            auto itBone = skinPose.FinalBoneMatricesByName.find(boneNames[bi]);
-                            if (itBone != skinPose.FinalBoneMatricesByName.end())
-                                sh->SetMat4("u_BoneMatrices[" + std::to_string((int)bi) + "]", itBone->second);
-                        }
+                    for (int bi = 0; bi < 100; ++bi)
+                        sh->SetMat4("u_BoneMatrices[" + std::to_string(bi) + "]", glm::mat4(1.0f));
+                    for (size_t bi = 0; bi < boneNames.size() && bi < 100; ++bi) {
+                        auto itBone = skinPose.FinalBoneMatricesByName.find(boneNames[bi]);
+                        if (itBone != skinPose.FinalBoneMatricesByName.end())
+                            sh->SetMat4("u_BoneMatrices[" + std::to_string((int)bi) + "]", itBone->second);
                     }
                     if (tex) tex->Bind(0);
+                    else if (m_CheckerTex) m_CheckerTex->Bind(0);
+                    Purr::RenderCommand::DrawIndexed(mesh);
+                }
+                else if (tex || obj.UseProceduralTexture) {
+                    auto& sh = m_TexShader;
+                    sh->Bind();
+                    uploadLights(sh);
+                    sh->SetMat4("u_Model", drawModel);
+                    sh->SetMat4("u_NormalMat", drawNormalMat);
+                    sh->SetFloat3("u_MatDiffuse", finalDiffuse);
+                    sh->SetFloat3("u_MatSpecular", obj.Mat.Specular);
+                    sh->SetFloat("u_MatShininess", obj.Mat.Shininess);
+                    sh->SetFloat("u_TilingFactor", obj.TexTiling);
+                    sh->SetInt("u_IllumModel", (int)obj.Mat.Model);
+                    sh->SetFloat("u_Opacity", op);
+                    sh->SetInt("u_UseProceduralTex", obj.UseProceduralTexture ? 1 : 0);
+                    sh->SetFloat("u_ProceduralTexScale", obj.ProceduralTexScale);
+                    sh->SetInt("u_Texture", 0);
+                    if (tex) tex->Bind(0);
+                    else if (m_CheckerTex) m_CheckerTex->Bind(0);
                     Purr::RenderCommand::DrawIndexed(mesh);
                 }
                 else {
                     m_Shader->Bind();
                     uploadLights(m_Shader);
-                    m_Shader->SetMat4("u_Model", model);
-                    m_Shader->SetMat4("u_NormalMat", normalMat);
+                    m_Shader->SetMat4("u_Model", drawModel);
+                    m_Shader->SetMat4("u_NormalMat", drawNormalMat);
                     m_Shader->SetFloat3("u_MatAmbient", obj.Mat.Ambient);
                     m_Shader->SetFloat3("u_MatDiffuse", finalDiffuse);
                     m_Shader->SetFloat3("u_MatSpecular", obj.Mat.Specular);
@@ -2237,11 +2420,11 @@ public:
                 for (auto& part : obj.Parts) {
                     if (!part.Mesh)
                         continue;
-                    drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint, part.BoneNames);
+                    drawMeshWithMaterial(part.Mesh, part.Texture, part.DiffuseTint, part.BoneNames, part.AnimNodeName, part.AnimNodeBindGlobal);
                 }
             }
             else {
-                drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f), {});
+                drawMeshWithMaterial(va, obj.Tex, glm::vec3(1.0f), {}, "", glm::mat4(1.0f));
             }
         };
 
@@ -2617,6 +2800,42 @@ public:
             }
             ImGui::PopStyleColor(3);
             ImGui::PopStyleVar(2);
+
+            // Menu emote (E) - male uniquement.
+            if (m_PlayerAvatarChoice == PlayerAvatarChoice::Male && m_PlayEmoteMenuOpen) {
+                const float menuW = 340.0f;
+                const float menuH = 120.0f;
+                const float menuX = m_ViewportPos.x + (m_ViewportSize.x - menuW) * 0.5f;
+                const float menuY = m_ViewportPos.y + m_ViewportSize.y - menuH - 78.0f;
+                ImGui::SetCursorScreenPos(ImVec2(menuX, menuY));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.05f, 0.05f, 0.06f, 0.55f));
+                ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.8f, 0.8f, 0.9f, 0.35f));
+                ImGui::BeginChild("##emote_menu_male", ImVec2(menuW, menuH), true);
+                ImGui::Text("Emotes (Male) - [E] ouvrir/fermer");
+                ImGui::Separator();
+                if (ImGui::Button(m_PlayMaleEmoteActive ? "Hip Hop Dancing [ON]" : "Hip Hop Dancing", ImVec2(150.0f, 34.0f))) {
+                    if (m_MaleHipHopClipLoaded) {
+                        m_PlayMaleEmoteActive = !m_PlayMaleEmoteActive;
+                        if (m_PlayMaleEmoteActive) {
+                            m_PlayMaleEmoteTime = 0.0f;
+                            m_PlayEmoteDebugTimer = 0.0f;
+                        }
+                        PURR_INFO("Emote toggle: hiphop active={} clipLoaded={}", m_PlayMaleEmoteActive ? 1 : 0, m_MaleHipHopClipLoaded ? 1 : 0);
+                    }
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled();
+                ImGui::Button("Slot vide##emote_empty_1", ImVec2(80.0f, 34.0f));
+                ImGui::SameLine();
+                ImGui::Button("Slot vide##emote_empty_2", ImVec2(80.0f, 34.0f));
+                ImGui::EndDisabled();
+                if (!m_MaleHipHopClipLoaded)
+                    ImGui::TextDisabled("Clip introuvable: Hip Hop Dancing.fbx");
+                ImGui::EndChild();
+                ImGui::PopStyleColor(2);
+                ImGui::PopStyleVar();
+            }
         }
 
         // ---- Toolbar gizmo (gauche, sous la barre des vues) — masquee en Play mode ----
@@ -3649,6 +3868,9 @@ private:
         std::shared_ptr<Purr::VertexArray> Mesh = nullptr;
         std::string TexPath;
         std::vector<std::string> BoneNames;
+        std::string AnimNodeName;
+        glm::mat4   AnimNodeBindLocal = glm::mat4(1.0f);
+        glm::mat4   AnimNodeBindGlobal = glm::mat4(1.0f);
         glm::vec3 DiffuseTint = glm::vec3(1.0f);
         glm::vec3 BoundsMin = glm::vec3(0.0f);
         glm::vec3 BoundsMax = glm::vec3(0.0f);
@@ -3692,6 +3914,9 @@ private:
                     part.Mesh = cachedPart.Mesh;
                     part.TexturePath = cachedPart.TexPath;
                     part.BoneNames = cachedPart.BoneNames;
+                    part.AnimNodeName = cachedPart.AnimNodeName;
+                    part.AnimNodeBindLocal = cachedPart.AnimNodeBindLocal;
+                    part.AnimNodeBindGlobal = cachedPart.AnimNodeBindGlobal;
                     part.DiffuseTint = cachedPart.DiffuseTint;
                     part.BoundsMin = cachedPart.BoundsMin;
                     part.BoundsMax = cachedPart.BoundsMax;
@@ -3754,12 +3979,18 @@ private:
                         cachePart.TexPath = resolvedTex;
                         for (const auto& b : lm.Bones)
                             cachePart.BoneNames.push_back(b.Name);
+                        cachePart.AnimNodeName = lm.SourceNodeName;
+                        cachePart.AnimNodeBindLocal = lm.SourceNodeBindLocal;
+                        cachePart.AnimNodeBindGlobal = lm.SourceNodeBindGlobal;
                         cachedParts.push_back(cachePart);
 
                         SceneObject::RenderPart part;
                         part.Mesh = vaPart;
                         part.TexturePath = resolvedTex;
                         part.BoneNames = cachePart.BoneNames;
+                        part.AnimNodeName = cachePart.AnimNodeName;
+                        part.AnimNodeBindLocal = cachePart.AnimNodeBindLocal;
+                        part.AnimNodeBindGlobal = cachePart.AnimNodeBindGlobal;
                         if (!resolvedTex.empty())
                             part.Texture = Purr::TextureManager::Load(resolvedTex);
                         obj.Parts.push_back(part);
@@ -4649,6 +4880,12 @@ private:
     float                         m_BazookaCooldown = 0.23f;
     float                         m_BazookaCooldownTimer = 0.0f;
     bool                          m_PlayBazookaEquipped = false;
+    bool                          m_PlayEmoteMenuOpen = false;
+    bool                          m_PlayMaleEmoteActive = false;
+    bool                          m_MaleHipHopClipLoaded = false;
+    float                         m_PlayMaleEmoteTime = 0.0f;
+    float                         m_PlayEmoteDebugTimer = 0.0f;
+    LoadedAnimationClip           m_MaleHipHopClip;
     float                         m_ProjectileSpeed = 15.0f;
     float                         m_ProjectileLifetime = 2.0f;
     float                         m_ProjectileGravity = -1.2f;
