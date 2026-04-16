@@ -91,6 +91,8 @@ struct SceneObject {
     bool IsColliderOnly = false;
     bool HiddenInHierarchy = false;
     float Opacity = 1.0f;
+    bool UseProceduralTexture = false;
+    float ProceduralTexScale = 8.0f;
     /** Coordonnees cylindriques (plan XZ) : x = r*cos(theta), z = r*sin(theta), y = hauteur. Utilise si Type == PolarMarker. */
     float PolarRadius = 0.0f;
     float PolarThetaDeg = 0.0f;
@@ -101,6 +103,7 @@ struct SceneObject {
         , Mat(o.Mat), Type(o.Type), Tex(o.Tex), TexPath(o.TexPath), MeshPath(o.MeshPath), Parts(o.Parts)
         , TexTiling(o.TexTiling), IsColliderOnly(o.IsColliderOnly)
         , HiddenInHierarchy(o.HiddenInHierarchy), Opacity(o.Opacity)
+        , UseProceduralTexture(o.UseProceduralTexture), ProceduralTexScale(o.ProceduralTexScale)
         , PolarRadius(o.PolarRadius), PolarThetaDeg(o.PolarThetaDeg)
         , Script(nullptr) {
     }
@@ -113,6 +116,8 @@ struct SceneObject {
         IsColliderOnly = o.IsColliderOnly;
         HiddenInHierarchy = o.HiddenInHierarchy;
         Opacity = o.Opacity;
+        UseProceduralTexture = o.UseProceduralTexture;
+        ProceduralTexScale = o.ProceduralTexScale;
         PolarRadius = o.PolarRadius;
         PolarThetaDeg = o.PolarThetaDeg;
         Script = nullptr; return *this;
@@ -939,7 +944,7 @@ public:
             const float op = glm::clamp(obj.Opacity, 0.0f, 1.0f);
             auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint) {
                 glm::vec3 finalDiffuse = obj.Mat.Diffuse * diffuseTint;
-                if (tex) {
+                if (tex || obj.UseProceduralTexture) {
                     m_TexShader->Bind();
                     uploadLights(m_TexShader);
                     m_TexShader->SetMat4("u_Model", model);
@@ -950,8 +955,10 @@ public:
                     m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
                     m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
                     m_TexShader->SetFloat("u_Opacity", op);
+                    m_TexShader->SetInt("u_UseProceduralTex", obj.UseProceduralTexture ? 1 : 0);
+                    m_TexShader->SetFloat("u_ProceduralTexScale", obj.ProceduralTexScale);
                     m_TexShader->SetInt("u_Texture", 0);
-                    tex->Bind(0);
+                    if (tex) tex->Bind(0);
                     Purr::RenderCommand::DrawIndexed(mesh);
                 }
                 else {
@@ -1379,7 +1386,7 @@ public:
 
             auto drawMeshWithMaterial = [&](const std::shared_ptr<Purr::VertexArray>& mesh, const std::shared_ptr<Purr::Texture>& tex, const glm::vec3& diffuseTint) {
                 glm::vec3 finalDiffuse = obj.Mat.Diffuse * diffuseTint;
-                if (tex) {
+                if (tex || obj.UseProceduralTexture) {
                     m_TexShader->Bind();
                     uploadLights(m_TexShader);
                     m_TexShader->SetMat4("u_Model", model);
@@ -1390,8 +1397,10 @@ public:
                     m_TexShader->SetFloat("u_TilingFactor", obj.TexTiling);
                     m_TexShader->SetInt("u_IllumModel", (int)obj.Mat.Model);
                     m_TexShader->SetFloat("u_Opacity", op);
+                    m_TexShader->SetInt("u_UseProceduralTex", obj.UseProceduralTexture ? 1 : 0);
+                    m_TexShader->SetFloat("u_ProceduralTexScale", obj.ProceduralTexScale);
                     m_TexShader->SetInt("u_Texture", 0);
-                    tex->Bind(0);
+                    if (tex) tex->Bind(0);
                     Purr::RenderCommand::DrawIndexed(mesh);
                 }
                 else {
@@ -1606,7 +1615,7 @@ public:
             if (m_ViewLayout == MultiViewLayout::Dual || m_ViewLayout == MultiViewLayout::Quad) {
                 if (m_ViewTopFramebuffer && m_AuxTopSize.x > 2.0f && m_AuxTopSize.y > 2.0f) {
                     Purr::Camera camTop = m_Camera;
-                    camTop.SetProjectionMode(Purr::ProjectionMode::Perspective);
+                    camTop.SetProjectionMode(Purr::ProjectionMode::Orthographic);
                     camTop.SetAspectRatio(m_AuxTopSize.x / m_AuxTopSize.y);
                     camTop.SetTarget(focus);
                     camTop.SetOrbitAngles(-90.0f, -85.0f);
@@ -1617,7 +1626,7 @@ public:
             if (m_ViewLayout == MultiViewLayout::Quad) {
                 if (m_ViewFrontFramebuffer && m_AuxFrontSize.x > 2.0f && m_AuxFrontSize.y > 2.0f) {
                     Purr::Camera camFront = m_Camera;
-                    camFront.SetProjectionMode(Purr::ProjectionMode::Perspective);
+                    camFront.SetProjectionMode(Purr::ProjectionMode::Orthographic);
                     camFront.SetAspectRatio(m_AuxFrontSize.x / m_AuxFrontSize.y);
                     camFront.SetTarget(focus);
                     camFront.SetOrbitAngles(-90.0f, 0.0f);
@@ -1626,7 +1635,7 @@ public:
                 }
                 if (m_ViewRightFramebuffer && m_AuxRightSize.x > 2.0f && m_AuxRightSize.y > 2.0f) {
                     Purr::Camera camRight = m_Camera;
-                    camRight.SetProjectionMode(Purr::ProjectionMode::Perspective);
+                    camRight.SetProjectionMode(Purr::ProjectionMode::Orthographic);
                     camRight.SetAspectRatio(m_AuxRightSize.x / m_AuxRightSize.y);
                     camRight.SetTarget(focus);
                     camRight.SetOrbitAngles(0.0f, 0.0f);
@@ -2232,10 +2241,17 @@ public:
                     ImGui::TextColored({ 0.5f,1.0f,0.5f,1.0f }, "%s", fn.c_str());
                 }
                 else { ImGui::TextDisabled("Aucune texture"); }
+                if (ImGui::Checkbox("Texture procedurale (damier)", &obj.UseProceduralTexture))
+                    SaveSnapshot();
+                if (obj.UseProceduralTexture) {
+                    ImGui::DragFloat("Echelle proc.", &obj.ProceduralTexScale, 0.1f, 1.0f, 64.0f);
+                    if (ImGui::IsItemDeactivatedAfterEdit()) SaveSnapshot();
+                    ImGui::TextDisabled("Generee par shader, sans fichier image.");
+                }
                 if (ImGui::Button("Charger texture...")) {
                     //std::string path = OpenFileDialog();
                     std::string path = OpenFileDialog("Images\0*.png;*.jpg;*.jpeg;*.bmp;*.tga\0All Files\0*.*\0");
-                    if (!path.empty()) { obj.Tex = Purr::TextureManager::Load(path); obj.TexPath = path; }
+                    if (!path.empty()) { obj.Tex = Purr::TextureManager::Load(path); obj.TexPath = path; obj.UseProceduralTexture = false; }
                 }
                 if (obj.Tex) { ImGui::SameLine(); if (ImGui::Button("Retirer")) { obj.Tex = nullptr; obj.TexPath = ""; } }
                 ImGui::Separator();
@@ -2442,6 +2458,8 @@ public:
             o["colliderOnly"] = obj.IsColliderOnly;
             o["hiddenInList"] = obj.HiddenInHierarchy;
             o["opacity"] = obj.Opacity;
+            o["proceduralTex"] = obj.UseProceduralTexture;
+            o["proceduralTexScale"] = obj.ProceduralTexScale;
             if (obj.Type == PrimitiveType::PolarMarker) {
                 o["polarRadius"] = obj.PolarRadius;
                 o["polarThetaDeg"] = obj.PolarThetaDeg;
@@ -2497,6 +2515,8 @@ public:
             obj.IsColliderOnly = o.value("colliderOnly", false);
             obj.HiddenInHierarchy = o.value("hiddenInList", false);
             obj.Opacity = o.value("opacity", 1.0f);
+            obj.UseProceduralTexture = o.value("proceduralTex", false);
+            obj.ProceduralTexScale = o.value("proceduralTexScale", 8.0f);
             if (obj.Type == PrimitiveType::PolarMarker) {
                 if (o.contains("polarRadius")) {
                     obj.PolarRadius = o["polarRadius"].get<float>();
@@ -3229,12 +3249,27 @@ private:
             uniform float u_MatShininess; uniform int u_IllumModel;
             uniform sampler2D u_Texture;
             uniform float u_TilingFactor;
+            uniform int u_UseProceduralTex;
+            uniform float u_ProceduralTexScale;
             uniform float u_Opacity;
             out vec4 color;
 
             void main(){
                vec2 uv = v_TexCoord * u_TilingFactor;
-                vec3 tc = texture(u_Texture, uv).rgb * u_MatDiffuse;
+                vec3 baseTex;
+                if (u_UseProceduralTex == 1) {
+                    vec2 puv = v_TexCoord * u_ProceduralTexScale;
+                    float checker = mod(floor(puv.x) + floor(puv.y), 2.0);
+                    vec3 cA = vec3(0.93, 0.92, 0.88);
+                    vec3 cB = vec3(0.22, 0.22, 0.24);
+                    // petit bruit procedural deterministic pour casser l'uniformite.
+                    float n = fract(sin(dot(floor(puv), vec2(12.9898,78.233))) * 43758.5453);
+                    baseTex = mix(cA, cB, checker) * (0.86 + 0.14 * n);
+                }
+                else {
+                    baseTex = texture(u_Texture, uv).rgb;
+                }
+                vec3 tc = baseTex * u_MatDiffuse;
 
                 vec3 N=normalize(v_Normal),V=normalize(u_CamPos-v_FragPos);
                 vec3 r=u_AmbientStrength*tc;
