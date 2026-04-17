@@ -1,4 +1,5 @@
 <img width="937" height="354" alt="Image" src="https://github.com/user-attachments/assets/868c8fb0-7f90-4b14-a38a-5afde06d3a8b" />
+
 # Purr - Projet IMN401
 
 Application d'infographie 3D en C++/OpenGL, avec un mode editeur interactif (`Sandbox`) construit sur un moteur maison (`Purr`).
