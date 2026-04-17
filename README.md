@@ -41,10 +41,7 @@ Ce depot contient:
 
 - Windows 10/11 x64
 - Visual Studio 2022 (Desktop development with C++)
-- Premake5.exe disponible et le mettre ici:
-```bash
-cd C:\dev\test-final5\vendor\bin\premake
-```
+- Premake5.exe disponible
 
 ## Cloner et builder
 
