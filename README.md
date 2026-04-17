@@ -78,10 +78,7 @@ Purr/
 
 ## Documentation de remise
 
-- Rapport principal: `doc/description_projet_imn401.md` (a exporter en PDF pour la remise)
-- Ajouter la video de demonstration selon les consignes du cours
+- Rapport principal: `purr_description_projet.pdf` 
+- Video youtube :   `https://www.youtube.com/watch?v=2ytG-AieKYk `
 
-## Etat du projet
 
-Projet developpe dans le cadre du cours IMN401 (Hiver 2026).  
-Le README est volontairement oriente execution rapide + livraison.
