@@ -3,7 +3,7 @@
 	url = https://github.com/gabime/spdlog
 [submodule "Purr/vendor/GLFW"]
 	path = Purr/vendor/GLFW
-	url = https://github.com/glfw/glfw
+	url = https://github.com/zoexshl/glfw
 [submodule "Purr/vendor/imgui"]
 	path = Purr/vendor/imgui
 	url = https://github.com/zoexshl/imgui
