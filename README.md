@@ -14,6 +14,7 @@ Ce depot contient:
 - Selection simple et multiple
 - Gizmos interactifs: translation, rotation, echelle
 - Undo/Redo (`Ctrl+Z` / `Ctrl+Y`)
+- Animation (`E` personnage M)
 - Animation keyframe (TRS), lecture/pause/stop, loop
 - Import de modeles (OBJ, FBX via Assimp)
 - Textures (fichier + procedurale damier)
@@ -38,17 +39,23 @@ Ce depot contient:
 
 - Windows 10/11 x64
 - Visual Studio 2022 (Desktop development with C++)
-- Premake5 disponible dans le `PATH` (ou script equivalent de l'equipe)
+- Premake5.exe disponible et le mettre ici:
+```bash
+cd C:\dev\test-final5\vendor\bin\premake
+```
 
-## Compilation (Windows)
+## Cloner et builder
 
-1. Ouvrir un terminal a la racine du projet.
-2. Generer les fichiers Visual Studio:
-   - `premake5 vs2022`
-3. Ouvrir la solution generee.
-4. Choisir `x64` + configuration `Debug` (ou `Release`).
-5. Compiler la solution.
-6. Lancer le projet de demarrage `Sandbox`.
+```bash
+git clone --recurse-submodules https://github.com/zoexshl/Purr.git
+cd Purr
+```
+Générer la solution Visual Studio :
+```bash
+GenerateProject.bat
+```
+
+Ouvrir `Purr.sln`, sélectionner la configuration **Debug | x64**, puis **Build → Build Solution**.
 
 Notes:
 - Les DLL Assimp sont copiees automatiquement en post-build selon la configuration.
@@ -75,10 +82,15 @@ Purr/
 - `Ctrl + Z` : Undo
 - `Ctrl + Y` : Redo
 - Clic gauche dans viewport : selection / manipulation selon contexte
+- `E` : mode Play (personnage M)
 
 ## Documentation de remise
 
 - Rapport principal: `purr_description_projet.pdf` 
-- Video youtube :   `https://www.youtube.com/watch?v=2ytG-AieKYk `
+
+Video youtube 
+```bash
+https://www.youtube.com/watch?v=2ytG-AieKYk
+```
 
 
